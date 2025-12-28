@@ -1,2 +1,234 @@
-# hyperspace_gba
-PICO-8 game Hyperspace by J-FRY ported to GBA by itsmeterada
+# Hyperspace - GBA Port
+
+![Screenshot](screenshot.jpg)
+
+A port of Hyperspace to the Game Boy Advance.
+
+## Original Game
+
+- **Original**: [Hyperspace by J-Fry](https://www.lexaloffle.com/bbs/?tid=51336) for PICO-8
+- **PicoSystem port**: itsmeterada
+
+## Features
+
+- Full 3D graphics with textured polygons
+- Smooth gameplay on real GBA hardware
+- High score saving via SRAM
+- BG2 affine scaling (160x128 → 240x160 fullscreen)
+- DMA-accelerated screen clearing
+
+## Building
+
+### Requirements
+
+- [devkitPro](https://devkitpro.org/) with devkitARM
+- GBA development libraries (libgba)
+
+### Build Instructions
+
+```bash
+# Set environment variable
+export DEVKITARM=/path/to/devkitARM
+
+# Build
+make
+
+# Clean
+make clean
+```
+
+The output ROM will be `hyperspace.gba`.
+
+## Controls
+
+| Button | Action |
+|--------|--------|
+| D-Pad | Move ship |
+| A | Fire laser |
+| B | Fire laser |
+| START | Start game / Pause |
+
+## Technical Details
+
+### Display
+
+- **Video Mode**: Mode 5 (160x128, 15-bit RGB555, double buffered)
+- **Fullscreen Scaling**: BG2 affine transformation scales the framebuffer to 240x160
+  - PA = 171 (160/240 in 8.8 fixed point)
+  - PD = 205 (128/160 in 8.8 fixed point)
+- **Double Buffering**:
+  - Page 1: 0x06000000
+  - Page 2: 0x0600A000
+  - Flip during VBlank to prevent tearing
+
+### Memory Layout
+
+| Region | Size | Usage |
+|--------|------|-------|
+| ROM | - | Spritesheet data (const), code |
+| EWRAM | 256KB | Large arrays (trails, enemies, backgrounds, cart_data) |
+| IWRAM | 32KB | Hot code paths, dither pattern |
+| SRAM | 32KB | High score persistence |
+
+The `EWRAM_DATA` attribute is used to place large arrays in EWRAM to avoid IWRAM overflow:
+```c
+#define EWRAM_DATA __attribute__((section(".ewram")))
+EWRAM_DATA static Trail trails[MAX_TRAILS];
+```
+
+### Fixed-Point Math
+
+All 3D calculations use Q16.16 fixed-point arithmetic:
+- `fix16_t` = 32-bit signed integer with 16 fractional bits
+- Multiplication: `(a * b) >> 16`
+- Division: `(a << 16) / b`
+
+Lookup tables for trigonometry (256 entries each):
+```c
+static const s16 sin_lut[256];  // Pre-calculated sin values
+```
+
+### PICO-8 Compatibility
+
+PICO-8's sin function is inverted compared to standard math libraries:
+- PICO-8: `sin(0.25) = -1` (quarter turn = down)
+- Standard: `sin(π/2) = 1`
+
+This is handled by using standard sin in the GBA port and adjusting rotation matrices accordingly.
+
+## Optimizations
+
+### 1. DMA Screen Clearing
+
+Screen clearing uses DMA3 with fixed source address for fast fill:
+```c
+static inline void DMAFastCopy(void* source, void* dest, u32 count, u32 mode) {
+    REG_DMA3SAD = (u32)source;
+    REG_DMA3DAD = (u32)dest;
+    REG_DMA3CNT = count | mode;
+}
+
+// Clear with DMA (fixed source = fill mode)
+DMAFastCopy(&clear_color, vram_buffer, SCREEN_WIDTH * SCREEN_HEIGHT,
+            DMA_SRC_FIXED | DMA_DST_INC | DMA_16BIT | DMA_ENABLE);
+```
+
+### 2. Scanline-Based Rasterizer
+
+Instead of per-pixel division for texture coordinates, the rasterizer uses scanline interpolation:
+```c
+// Calculate gradients once per scanline
+fix16_t inv_span = fix16_div(fix16_one, span);
+fix16_t du_dx = fix16_mul(u_right - u_left, inv_span);
+
+// Interpolate across scanline (no division in inner loop)
+for (int x = xl; x <= xr; x++) {
+    row[x] = palette_map[SGET_FAST(u >> 16, v >> 16)];
+    u += du_dx;
+    v += dv_dx;
+}
+```
+
+### 3. ARM Mode for Critical Functions
+
+The rasterizer runs in ARM mode (32-bit instructions) for better performance:
+```c
+__attribute__((target("arm")))
+static void rasterize_flat_tri(...) { ... }
+```
+
+### 4. Inlined Pixel Operations
+
+Pixel operations are implemented as macros to eliminate function call overhead:
+```c
+#define SGET_FAST(x, y) (hyperspace_spritesheet[y][x])
+#define VRAM_PSET(x, y, c) do { \
+    if ((unsigned)(x) < SCREEN_WIDTH && (unsigned)(y) < SCREEN_HEIGHT) \
+        vram_buffer[(y) * SCREEN_WIDTH + (x)] = (c); \
+} while(0)
+```
+
+### 5. Direct VRAM Rendering
+
+Rendering directly to VRAM pages eliminates the need for a separate screen buffer and memcpy:
+```c
+static volatile u16* vram_buffer;  // Points to back buffer
+vram_buffer = current_page ? VRAM_PAGE1 : VRAM_PAGE2;
+```
+
+### 6. Optimized Square Root
+
+Fixed-point square root uses integer sqrt for the initial estimate:
+```c
+static inline u32 isqrt(u32 n) {
+    u32 x = n, y = (x + 1) >> 1;
+    while (y < x) { x = y; y = (x + n / x) >> 1; }
+    return x;
+}
+
+static inline fix16_t fix16_sqrt(fix16_t x) {
+    if (x <= 0) return 0;
+    u32 root = isqrt((u32)x << 8);
+    return (fix16_t)(root << 4);
+}
+```
+
+### 7. Insertion Sort for Triangles
+
+Triangle depth sorting uses insertion sort instead of qsort (faster for small arrays):
+```c
+static void sort_tris(Triangle* tris, int num, Vec3* projs) {
+    for (int i = 1; i < num; i++) {
+        Triangle temp = tris[i];
+        int j = i - 1;
+        while (j >= 0 && tris[j].z > temp.z) {
+            tris[j + 1] = tris[j];
+            j--;
+        }
+        tris[j + 1] = temp;
+    }
+}
+```
+
+### 8. Early Culling
+
+Triangles are culled early to avoid unnecessary processing:
+```c
+// Skip if all vertices behind camera
+if (v0->z <= 0 && v1->z <= 0 && v2->z <= 0) return;
+
+// Skip if completely off-screen
+if (max_x < 0 || min_x >= F16(SCREEN_WIDTH)) return;
+if (max_y < 0 || min_y >= F16(SCREEN_HEIGHT)) return;
+```
+
+### 9. Bitmask Modulo
+
+Where possible, modulo operations are replaced with bitmasks:
+```c
+// Instead of: idx = idx % 256
+idx = idx & 255;
+```
+
+### 10. Simplified Angle Wrapping
+
+Angle wrapping uses simple comparison instead of modulo:
+```c
+// Instead of: angle = angle % TWO_PI
+if (angle > FIX_TWO_PI) angle -= FIX_TWO_PI;
+if (angle < 0) angle += FIX_TWO_PI;
+```
+
+## File Structure
+
+```
+gba/
+├── main_gba.c       # Main source file (complete GBA port)
+├── Makefile         # devkitARM build configuration
+├── hyperspace.gba   # Output ROM
+└── README.md        # This file
+```
+
+## License
+
+This port is based on the original PICO-8 game by J-Fry.
