@@ -1,6 +1,6 @@
 # Hyperspace - GBA Port
 
-![Screenshot](screenshot.png)
+![Screenshot](screenshot.jpg)
 
 A port of Hyperspace to the Game Boy Advance.
 
