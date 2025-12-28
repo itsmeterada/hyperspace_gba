@@ -1,6 +1,6 @@
 # Hyperspace - GBA Port
 
-![Screenshot](screenshot.jpg)
+![Screenshot](screenshot.png)
 
 A port of Hyperspace to the Game Boy Advance.
 
@@ -8,6 +8,9 @@ A port of Hyperspace to the Game Boy Advance.
 
 - **Original**: [Hyperspace by J-Fry](https://www.lexaloffle.com/bbs/?tid=51336) for PICO-8
 - **PicoSystem port**: itsmeterada
+- **GBA port**: itsmeterada
+
+Many optimizations developed for this GBA port have been backported to the PicoSystem version.
 
 ## Features
 
@@ -131,35 +134,43 @@ for (int x = xl; x <= xr; x++) {
 
 ### 3. ARM Assembly Optimizations
 
-Critical inner loops are written in hand-optimized ARM assembly (`raster_arm.s`):
+Critical inner loops are written in hand-tuned ARM assembly (`raster_arm.s`), placed in IWRAM for fastest execution (~12 cycles per pixel):
 
 **Fixed-point multiply (`fix16_mul_arm`):**
 ```asm
-@ Uses SMULL for 64-bit multiply, then extracts middle 32 bits
-smull   r2, r1, r0, r1      @ r1:r2 = a * b
-mov     r0, r2, lsr #16
-orr     r0, r0, r1, lsl #16
+fix16_mul_arm:
+    smull   r2, r1, r0, r1      @ 64-bit result in r1:r2
+    mov     r0, r2, lsr #16     @ grab middle 32 bits
+    orr     r0, r0, r1, lsl #16
+    bx      lr
 ```
 
 **Scanline renderer (`render_scanline_arm`):**
 - Keeps UV coordinates and increments in registers
-- Unrolled loop processes 4 pixels at a time
+- Unrolled version processes 4 pixels at a time
+- Uses numeric local labels (1:, 4:, 9:) in classic hand-assembly style
 - Uses `ldrb`/`ldrh`/`strh` for texture fetch and pixel write
-- Placed in IWRAM for fastest execution
 
 ```asm
-.section .iwram, "ax", %progbits
-render_scanline_arm:
-    @ r3 = u, r4 = v, r5 = du_dx, r6 = dv_dx
-    @ Inner loop: ~12 cycles per pixel
+1:  @ --- pixel loop ---
     mov     r12, r3, asr #16    @ tu = u >> 16
-    add     r12, r12, lr, lsl #7 @ offset = tv * 128 + tu
-    ldrb    r12, [r7, r12]      @ palette index
-    ldrh    r12, [r8, r12, lsl #1] @ color
-    strh    r12, [r0], #2       @ write pixel
-    add     r3, r3, r5          @ u += du_dx
-    add     r4, r4, r6          @ v += dv_dx
+    add     r12, r12, r9        @ + offset
+    mov     lr, r4, asr #16     @ tv = v >> 16
+    add     lr, lr, r10         @ + offset
+    add     r12, r12, lr, lsl #7  @ tex is 128 wide
+    ldrb    r12, [r7, r12]      @ fetch texel
+    mov     r12, r12, lsl #1    @ *2 for u16 lookup
+    ldrh    r12, [r8, r12]      @ palette lookup
+    strh    r12, [r0], #2       @ store & advance
+    add     r3, r3, r5          @ u += dudx
+    add     r4, r4, r6          @ v += dvdx
+    subs    r11, r11, #1
+    bgt     1b
 ```
+
+**Fast memset (`fast_memset16_arm`):**
+- Uses STM to write 32 bytes per iteration
+- 8 registers filled with duplicated 16-bit pattern
 
 ### 4. Inlined Pixel Operations
 
@@ -243,12 +254,24 @@ if (angle > FIX_TWO_PI) angle -= FIX_TWO_PI;
 if (angle < 0) angle += FIX_TWO_PI;
 ```
 
+## Optimizations Backported to PicoSystem
+
+The following optimizations were developed for the GBA port and backported to the PicoSystem version:
+
+| Optimization | Description |
+|--------------|-------------|
+| Insertion Sort | Faster than qsort for small triangle arrays (<20 elements) |
+| Scanline Gradients | Pre-compute barycentric gradients to avoid per-pixel division |
+| Fast Macros | `SGET_FAST`/`PSET_FAST` bypass bounds checking in inner loops |
+| Bitmask Modulo | Replace `% 2^n` with `& (2^n-1)` for power-of-2 divisors |
+| Early Culling | Skip triangles behind camera or completely off-screen |
+
 ## File Structure
 
 ```
 gba/
 ├── main_gba.c       # Main source file (complete GBA port)
-├── raster_arm.s     # ARM assembly optimizations (IWRAM)
+├── raster_arm.s     # Hand-tuned ARM assembly (IWRAM)
 ├── Makefile         # devkitARM build configuration
 ├── hyperspace.gba   # Output ROM
 └── README.md        # This file
