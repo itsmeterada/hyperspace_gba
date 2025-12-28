@@ -1267,8 +1267,8 @@ static void game_draw(void) {
     pal_reset();
     if (cur_mode == 2) { char buf[32]; snprintf(buf, 32, "SCORE %d", score); print_3d(buf, 1, 1);
         spr(16, 99, 1, 8, 1); clip_set(99, 1, life * 15, 7); spr(0, 99, 1, 8, 1); clip_reset();
-    } else if (cur_mode != 1) { print_3d("HYPERSPACE", 50, 1); print_3d("GBA Port", 54, 8);
-        if (cur_mode == 0) { print_3d("PRESS L/R", 50, 100); char buf[32]; snprintf(buf, 32, "BEST %d", best_score); print_3d(buf, 1, 120); }
+    } else if (cur_mode != 1) { print_3d("HYPERSPACE", 58, 1); print_3d("GBA Port by itsmeterada", 34, 8);
+        if (cur_mode == 0) { print_3d("PRESS L/R", 58, 100); char buf[32]; snprintf(buf, 32, "BEST %d", best_score); print_3d(buf, 1, 120); }
         else { print_3d("PRESS L/R", 50, 55); print_3d("DPAD:OPT", 50, 65);
             const char* opt[] = {"AUTO", "MANUAL", "INV Y", "NORM Y"};
             print_3d(opt[manual_fire], 9, 110); print_3d(opt[non_inverted_y + 2], 9, 120); } }
