@@ -1,5 +1,6 @@
 @ Hyperspace GBA - ARM Assembly Optimizations
 @ Optimized rasterizer and fixed-point math routines
+@ itsmeterada / takehiko.terada@gmail.com
 
     .arm
     .align 4
