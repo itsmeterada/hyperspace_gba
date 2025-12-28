@@ -1,6 +1,6 @@
 # Hyperspace - GBA Port
 
-![Screenshot](screenshot.jpg)
+![Screenshot](screenshot.png)
 
 A port of Hyperspace to the Game Boy Advance.
 
@@ -129,12 +129,36 @@ for (int x = xl; x <= xr; x++) {
 }
 ```
 
-### 3. ARM Mode for Critical Functions
+### 3. ARM Assembly Optimizations
 
-The rasterizer runs in ARM mode (32-bit instructions) for better performance:
-```c
-__attribute__((target("arm")))
-static void rasterize_flat_tri(...) { ... }
+Critical inner loops are written in hand-optimized ARM assembly (`raster_arm.s`):
+
+**Fixed-point multiply (`fix16_mul_arm`):**
+```asm
+@ Uses SMULL for 64-bit multiply, then extracts middle 32 bits
+smull   r2, r1, r0, r1      @ r1:r2 = a * b
+mov     r0, r2, lsr #16
+orr     r0, r0, r1, lsl #16
+```
+
+**Scanline renderer (`render_scanline_arm`):**
+- Keeps UV coordinates and increments in registers
+- Unrolled loop processes 4 pixels at a time
+- Uses `ldrb`/`ldrh`/`strh` for texture fetch and pixel write
+- Placed in IWRAM for fastest execution
+
+```asm
+.section .iwram, "ax", %progbits
+render_scanline_arm:
+    @ r3 = u, r4 = v, r5 = du_dx, r6 = dv_dx
+    @ Inner loop: ~12 cycles per pixel
+    mov     r12, r3, asr #16    @ tu = u >> 16
+    add     r12, r12, lr, lsl #7 @ offset = tv * 128 + tu
+    ldrb    r12, [r7, r12]      @ palette index
+    ldrh    r12, [r8, r12, lsl #1] @ color
+    strh    r12, [r0], #2       @ write pixel
+    add     r3, r3, r5          @ u += du_dx
+    add     r4, r4, r6          @ v += dv_dx
 ```
 
 ### 4. Inlined Pixel Operations
@@ -224,6 +248,7 @@ if (angle < 0) angle += FIX_TWO_PI;
 ```
 gba/
 ├── main_gba.c       # Main source file (complete GBA port)
+├── raster_arm.s     # ARM assembly optimizations (IWRAM)
 ├── Makefile         # devkitARM build configuration
 ├── hyperspace.gba   # Output ROM
 └── README.md        # This file

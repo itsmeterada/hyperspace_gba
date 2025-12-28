@@ -82,9 +82,16 @@ typedef s32 fix16_t;
 #define fix16_pi        0x0003243F
 #define F16(x)          ((fix16_t)((x) * 65536.0f))
 
-static inline fix16_t fix16_mul(fix16_t a, fix16_t b) {
-    return (fix16_t)(((s64)a * b) >> 16);
-}
+// ARM assembly optimized functions (in raster_arm.s)
+extern fix16_t fix16_mul_arm(fix16_t a, fix16_t b);
+extern void render_scanline_arm(volatile u16* row, int xl, int xr, fix16_t u,
+                                 fix16_t v, fix16_t du_dx, fix16_t dv_dx,
+                                 const u8* spritesheet, const u16* palette,
+                                 int tex_offset_x, int tex_y);
+extern void fast_memset16_arm(volatile u16* dest, u16 value, u32 count);
+
+// Use ARM assembly for critical multiply
+#define fix16_mul(a, b) fix16_mul_arm(a, b)
 
 // Optimized division - avoid when possible, use reciprocal multiply instead
 static inline fix16_t fix16_div(fix16_t a, fix16_t b) {
@@ -715,20 +722,15 @@ static void rasterize_flat_tri(Vec3* v0, Vec3* v1, Vec3* v2, fix16_t* uv0, fix16
                 fix16_t u = u_left + fix16_mul(x_prestep, du_dx);
                 fix16_t v = v_left_val + fix16_mul(x_prestep, dv_dx);
 
-                // Pixel loop with incremental UV (no division!)
+                // Dither pattern for lighting
                 int offset_x = tex_x;
-                if (use_lit && ((y ^ xl) & 1)) offset_x += tex_lit_x;  // Simple dither pattern
+                if (use_lit && ((y ^ xl) & 1)) offset_x += tex_lit_x;
 
-                // Get row pointer for fast access
+                // Use ARM assembly optimized scanline renderer
                 volatile u16* row = &vram_buffer[y * SCREEN_WIDTH];
-                for (int x = xl; x <= xr; x++) {
-                    int tu = fix16_to_int(u);
-                    int tv = fix16_to_int(v);
-                    u8 c = SGET_FAST(tu + offset_x, tv + tex_y);
-                    row[x] = palette_map[c];
-                    u += du_dx;
-                    v += dv_dx;
-                }
+                render_scanline_arm(row, xl, xr, u, v, du_dx, dv_dx,
+                                    (const u8*)hyperspace_spritesheet, palette_map,
+                                    offset_x, tex_y);
             }
         }
 
@@ -965,6 +967,76 @@ static void update_enemies(void) {
                     if (spd_len > desc_spd) vec3_mul(&nme->spd, fix16_div(desc_spd, spd_len));
                     nme->rot_x = fix16_mul(F16(-0.08), nme->spd.y);
                     nme->rot_y = fix16_mul(-nme_rot[sub_type - 1], nme->spd.x);
+
+                    // Enemy laser spawning logic
+                    int nb_lasers = type - 2;
+
+                    if ((type == 4 || nme->hit_t == 0) && nme->laser_t < 0) {
+                        nme->laser_t = 0;
+                    }
+
+                    nme->laser_t += fix16_one;
+
+                    if (nme->laser_t > nme->stop_laser_t) {
+                        nme->laser_t = -fix16_div(F16(60.0) + rnd_fix(F16(60.0)), game_spd);
+                        nme->stop_laser_t = F16(60.0) + rnd_fix(F16(60.0));
+                        fix16_t c = fix16_mul(F16(-0.5), fix16_div(nme->pos.z, game_spd));
+                        for (int j = 0; j < nb_lasers && j < 2; j++) {
+                            nme->laser_offset_x[j] = sym_random_fix(F16(30.0)) + fix16_mul(ship_spd_x, c);
+                            nme->laser_offset_y[j] = sym_random_fix(F16(30.0)) + fix16_mul(ship_spd_y, c);
+                        }
+                    }
+
+                    fix16_t laser_t_val = nme->laser_t;
+                    fix16_t t = fix16_div(F16(6.0), game_spd);
+                    if (laser_t_val > 0) {
+                        nme->next_laser_t += fix16_one;
+
+                        if (nme->next_laser_t >= t) {
+                            nme->next_laser_t -= t;
+
+                            if (type != 2) {
+                                fix16_t angle = fix16_mul(fix16_div(laser_t_val, F16(120.0)), FIX_TWO_PI);
+                                fix16_t ratio = fix16_cos(angle);
+
+                                for (int j = 0; j < nb_lasers && j < 2; j++) {
+                                    Vec3 laser_pos;
+                                    Mesh* mesh = &nme_meshes[type - 1];
+                                    if (j < mesh->num_vertices) {
+                                        laser_pos.x = nme->pos.x + mesh->vertices[j].x;
+                                        laser_pos.y = nme->pos.y;
+                                        laser_pos.z = nme->pos.z + mesh->vertices[j].z;
+                                    } else {
+                                        laser_pos = nme->pos;
+                                    }
+
+                                    Laser* laser = spawn_laser(nme_lasers, &num_nme_lasers, laser_pos);
+                                    if (laser) {
+                                        Vec3 target = {
+                                            ship_x + fix16_mul(nme->laser_offset_x[j], ratio) + sym_random_fix(F16(5.0)),
+                                            ship_y + fix16_mul(nme->laser_offset_y[j], ratio) + sym_random_fix(F16(5.0)),
+                                            0
+                                        };
+                                        Vec3 ldir = vec3_minus(&target, &laser_pos);
+                                        vec3_mul(&ldir, F16(0.1));
+                                        fix16_t len = vec3_length(&ldir);
+                                        fix16_t v = (len > F16(0.001)) ? fix16_div(fix16_mul(FIX_TWO, game_spd), len) : fix16_mul(FIX_TWO, game_spd);
+                                        laser->spd.x = fix16_mul(ldir.x, v);
+                                        laser->spd.y = fix16_mul(ldir.y, v);
+                                        laser->spd.z = fix16_mul(ldir.z, v);
+                                    }
+                                }
+                            } else {
+                                Vec3 laser_pos = {nme->pos.x, nme->pos.y, nme->pos.z + F16(12.0)};
+                                Laser* laser = spawn_laser(nme_lasers, &num_nme_lasers, laser_pos);
+                                if (laser) {
+                                    laser->spd.x = sym_random_fix(F16(0.05));
+                                    laser->spd.y = sym_random_fix(F16(0.05));
+                                    laser->spd.z = fix16_mul(FIX_TWO, game_spd);
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
