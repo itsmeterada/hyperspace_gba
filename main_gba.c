@@ -472,8 +472,10 @@ static fix16_t src_cam_x, src_cam_y, src_cam_angle_x, src_cam_angle_z;
 static fix16_t dst_cam_x, dst_cam_y, dst_cam_angle_x, dst_cam_angle_z;
 static fix16_t interpolation_ratio = 0, interpolation_spd = 0, asteroid_mul_t = F16(1.0);
 static int explosion_color[4] = {9, 10, 15, 7};
-static int ngn_colors[4] = {12, 1, 12, 7};
-static int laser_ngn_colors[4] = {12, 14, 8, 15};
+// PICO-8 original: ngn_colors = {13,12,7,12}
+static int ngn_colors[4] = {13, 12, 7, 12};
+// PICO-8 original: laser_ngn_colors = {3,11,7,11}
+static int laser_ngn_colors[4] = {3, 11, 7, 11};
 static fix16_t ngn_col_idx = 0, ngn_laser_col_idx = 0;
 static int flare_offset = 0;
 static int mem_pos = 0;
