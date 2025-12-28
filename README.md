@@ -277,6 +277,12 @@ gba/
 └── README.md        # This file
 ```
 
+## Related Projects
+
+- [Hyperspace for PicoSystem](https://github.com/itsmeterada/picosystem_hyperspace) - Port for Pimoroni PicoSystem (RP2040, 240x240 display)
+- [Hyperspace SDL2](https://github.com/itsmeterada/hyperspace) - SDL2 port for desktop platforms (Windows, macOS, Linux)
+- [Hyperspace for Thumby Color](https://github.com/itsmeterada/hyperspace_thumbycolor) - Port for TinyCircuits Thumby Color (RP2350, 128x128 display)
+
 ## License
 
 This port is based on the original PICO-8 game by J-Fry.
