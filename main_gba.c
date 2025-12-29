@@ -11,7 +11,7 @@
 #include <stdio.h>
 
 // Include sprite data early (needed for SGET_FAST macro)
-#include "../hyperspace_data.h"
+#include "hyperspace_data.h"
 
 // GBA hardware definitions
 typedef unsigned char u8;
@@ -284,12 +284,25 @@ static inline fix16_t fix16_sqrt(fix16_t x) {
     return (fix16_t)(root << 4);
 }
 
-// PICO-8 palette in RGB555
+// PICO-8 palette in RGB555 (accurate conversion from 8-bit)
+// Formula: 5-bit = round(8-bit * 31 / 255)
 static const u16 PICO8_PALETTE[16] = {
-    RGB15(0,0,0), RGB15(3,5,10), RGB15(15,4,10), RGB15(0,16,10),
-    RGB15(21,10,6), RGB15(11,10,9), RGB15(24,24,24), RGB15(31,30,29),
-    RGB15(31,0,9), RGB15(31,20,0), RGB15(31,29,4), RGB15(0,28,6),
-    RGB15(5,21,31), RGB15(16,14,19), RGB15(31,14,21), RGB15(31,25,21),
+    RGB15(0,0,0),      //  0: #000000 black
+    RGB15(4,5,10),     //  1: #1D2B53 dark blue
+    RGB15(15,5,10),    //  2: #7E2553 dark purple
+    RGB15(0,16,10),    //  3: #008751 dark green
+    RGB15(21,10,7),    //  4: #AB5236 brown
+    RGB15(12,11,10),   //  5: #5F574F dark gray
+    RGB15(24,24,24),   //  6: #C2C3C7 light gray
+    RGB15(31,29,28),   //  7: #FFF1E8 white
+    RGB15(31,0,9),     //  8: #FF004D red
+    RGB15(31,20,0),    //  9: #FFA300 orange
+    RGB15(31,29,5),    // 10: #FFEC27 yellow
+    RGB15(0,28,7),     // 11: #00E436 green
+    RGB15(5,21,31),    // 12: #29ADFF blue
+    RGB15(16,14,19),   // 13: #83769C indigo
+    RGB15(31,14,20),   // 14: #FF77A8 pink
+    RGB15(31,25,21),   // 15: #FFCCAA peach
 };
 
 // Render directly to VRAM in RGB555 format (no intermediate buffer)
@@ -1699,6 +1712,28 @@ static void set_ngn_pal(void) {
     pal(8, laser_ngn_colors[idx]); pal(14, laser_ngn_colors[(idx + 1) & 3]); pal(15, laser_ngn_colors[(idx + 2) & 3]);
 }
 
+static void draw_lens_flare(void) {
+    // Draw lens flare sprites along the line from star to screen center
+    fix16_t vx = FIX_SCREEN_CENTER_X - star_proj.x;
+    fix16_t vy = FIX_SCREEN_CENTER_Y - star_proj.y;
+
+    fix16_t factors[] = {F16(-0.3), F16(0.4), F16(0.5), F16(0.9), F16(1.0)};
+    // Sprite indices for each flare element (swapped 0 and 1 to match original)
+    int sprite_map[] = {1, 0, 2, 2, 3};
+
+    // Use flare_offset to alternate between sprite sets 40-43 and 44-47
+    int base_sprite = 40 + flare_offset * 4;
+
+    for (int i = 0; i < 5; i++) {
+        int px = fix16_to_int(FIX_SCREEN_CENTER_X + fix16_mul(vx, factors[i]));
+        int py = fix16_to_int(FIX_SCREEN_CENTER_Y + fix16_mul(vy, factors[i]));
+        // Center the 8x8 sprite by offsetting -4
+        spr(base_sprite + sprite_map[i], px - 4, py - 4, 1, 1);
+    }
+
+    flare_offset = 1 - flare_offset;
+}
+
 static void game_draw(void) {
     Vec3 p0, p1; cls(); transform_vert();
     for (int i = 0; i < MAX_BGS; i++) {
@@ -1737,6 +1772,8 @@ static void game_draw(void) {
     t_light_dir = &ship_light_dir; set_ngn_pal();
     for (int i = 0; i < ship_mesh.num_triangles; i++) rasterize_tri(i, ship_mesh.triangles, ship_mesh.projected);
     pal_reset();
+    // Draw lens flare after ship rendering
+    if (star_visible) draw_lens_flare();
     if (cur_mode == 2) { char buf[32]; snprintf(buf, 32, "SCORE %d", score); print_3d(buf, 1, 1);
         spr(16, 99, 1, 8, 1); clip_set(99, 1, life * 15, 7); spr(0, 99, 1, 8, 1); clip_reset();
     } else if (cur_mode != 1) { print_3d("HYPERSPACE", 58, 1); print_3d("GBA Port by itsmeterada", 34, 8);
