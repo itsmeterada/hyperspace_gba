@@ -138,16 +138,96 @@ extern void fast_memset16_arm(volatile u16* dest, u16 value, u32 count);
 // Optimized division - avoid when possible, use reciprocal multiply instead
 static inline fix16_t fix16_div(fix16_t a, fix16_t b) {
     if (b == 0) return 0;
-    // For small divisors, use direct division
     return (fix16_t)(((s64)a << 16) / b);
 }
 
-// Fast reciprocal: returns 1/x in fixed point (for x in 0.5 to 128 range)
-static inline fix16_t fix16_recip(fix16_t x) {
-    if (x == 0) return 0;
-    if (x < 0) return -fix16_recip(-x);
-    // 1.0 / x = 65536 * 65536 / x
-    return (fix16_t)(((s64)0x100000000LL) / x);
+// Reciprocal LUT: 1/x for x = 1..512 (covers screen width spans)
+// Entry i = 65536 / i (for integer i)
+static const u32 recip_lut[513] = {
+    0xFFFFFFFF, // 0: unused
+    0x10000, 0x8000, 0x5555, 0x4000, 0x3333, 0x2AAA, 0x2492, 0x2000, // 1-8
+    0x1C71, 0x1999, 0x1745, 0x1555, 0x13B1, 0x1249, 0x1111, 0x1000, // 9-16
+    0x0F0F, 0x0E38, 0x0D79, 0x0CCC, 0x0C30, 0x0BA2, 0x0B21, 0x0AAA, // 17-24
+    0x0A3D, 0x09D8, 0x097B, 0x0924, 0x08D3, 0x0888, 0x0842, 0x0800, // 25-32
+    0x07C1, 0x0787, 0x0750, 0x071C, 0x06EB, 0x06BC, 0x0690, 0x0666, // 33-40
+    0x063E, 0x0618, 0x05F4, 0x05D1, 0x05B0, 0x0590, 0x0572, 0x0555, // 41-48
+    0x0539, 0x051E, 0x0505, 0x04EC, 0x04D4, 0x04BD, 0x04A7, 0x0492, // 49-56
+    0x047D, 0x0469, 0x0456, 0x0444, 0x0432, 0x0421, 0x0410, 0x0400, // 57-64
+    0x03F0, 0x03E0, 0x03D2, 0x03C3, 0x03B5, 0x03A8, 0x039B, 0x038E, // 65-72
+    0x0381, 0x0375, 0x0369, 0x035E, 0x0353, 0x0348, 0x033D, 0x0333, // 73-80
+    0x0329, 0x031F, 0x0315, 0x030C, 0x0303, 0x02FA, 0x02F1, 0x02E8, // 81-88
+    0x02E0, 0x02D8, 0x02D0, 0x02C8, 0x02C0, 0x02B9, 0x02B1, 0x02AA, // 89-96
+    0x02A3, 0x029C, 0x0295, 0x028F, 0x0288, 0x0282, 0x027C, 0x0276, // 97-104
+    0x0270, 0x026A, 0x0264, 0x025E, 0x0259, 0x0253, 0x024E, 0x0249, // 105-112
+    0x0243, 0x023E, 0x0239, 0x0234, 0x0230, 0x022B, 0x0226, 0x0222, // 113-120
+    0x021D, 0x0219, 0x0214, 0x0210, 0x020C, 0x0208, 0x0204, 0x0200, // 121-128
+    0x01FC, 0x01F8, 0x01F4, 0x01F0, 0x01EC, 0x01E9, 0x01E5, 0x01E1, // 129-136
+    0x01DE, 0x01DA, 0x01D7, 0x01D4, 0x01D0, 0x01CD, 0x01CA, 0x01C7, // 137-144
+    0x01C3, 0x01C0, 0x01BD, 0x01BA, 0x01B7, 0x01B4, 0x01B2, 0x01AF, // 145-152
+    0x01AC, 0x01A9, 0x01A6, 0x01A4, 0x01A1, 0x019E, 0x019C, 0x0199, // 153-160
+    0x0197, 0x0194, 0x0192, 0x018F, 0x018D, 0x018A, 0x0188, 0x0186, // 161-168
+    0x0183, 0x0181, 0x017F, 0x017D, 0x017A, 0x0178, 0x0176, 0x0174, // 169-176
+    0x0172, 0x0170, 0x016E, 0x016C, 0x016A, 0x0168, 0x0166, 0x0164, // 177-184
+    0x0162, 0x0160, 0x015E, 0x015C, 0x015A, 0x0158, 0x0157, 0x0155, // 185-192
+    0x0153, 0x0151, 0x0150, 0x014E, 0x014C, 0x014A, 0x0149, 0x0147, // 193-200
+    0x0146, 0x0144, 0x0142, 0x0141, 0x013F, 0x013E, 0x013C, 0x013B, // 201-208
+    0x0139, 0x0138, 0x0136, 0x0135, 0x0133, 0x0132, 0x0130, 0x012F, // 209-216
+    0x012E, 0x012C, 0x012B, 0x0129, 0x0128, 0x0127, 0x0125, 0x0124, // 217-224
+    0x0123, 0x0121, 0x0120, 0x011F, 0x011E, 0x011C, 0x011B, 0x011A, // 225-232
+    0x0119, 0x0118, 0x0116, 0x0115, 0x0114, 0x0113, 0x0112, 0x0111, // 233-240
+    0x010F, 0x010E, 0x010D, 0x010C, 0x010B, 0x010A, 0x0109, 0x0108, // 241-248
+    0x0107, 0x0106, 0x0105, 0x0104, 0x0103, 0x0102, 0x0101, 0x0100, // 249-256
+    0x00FF, 0x00FE, 0x00FD, 0x00FC, 0x00FB, 0x00FA, 0x00F9, 0x00F8, // 257-264
+    0x00F8, 0x00F7, 0x00F6, 0x00F5, 0x00F4, 0x00F3, 0x00F2, 0x00F2, // 265-272
+    0x00F1, 0x00F0, 0x00EF, 0x00EE, 0x00EE, 0x00ED, 0x00EC, 0x00EB, // 273-280
+    0x00EB, 0x00EA, 0x00E9, 0x00E8, 0x00E8, 0x00E7, 0x00E6, 0x00E5, // 281-288
+    0x00E5, 0x00E4, 0x00E3, 0x00E3, 0x00E2, 0x00E1, 0x00E1, 0x00E0, // 289-296
+    0x00DF, 0x00DF, 0x00DE, 0x00DD, 0x00DD, 0x00DC, 0x00DB, 0x00DB, // 297-304
+    0x00DA, 0x00DA, 0x00D9, 0x00D8, 0x00D8, 0x00D7, 0x00D7, 0x00D6, // 305-312
+    0x00D5, 0x00D5, 0x00D4, 0x00D4, 0x00D3, 0x00D3, 0x00D2, 0x00D1, // 313-320
+    0x00D1, 0x00D0, 0x00D0, 0x00CF, 0x00CF, 0x00CE, 0x00CE, 0x00CD, // 321-328
+    0x00CD, 0x00CC, 0x00CC, 0x00CB, 0x00CB, 0x00CA, 0x00CA, 0x00C9, // 329-336
+    0x00C9, 0x00C8, 0x00C8, 0x00C7, 0x00C7, 0x00C6, 0x00C6, 0x00C5, // 337-344
+    0x00C5, 0x00C4, 0x00C4, 0x00C3, 0x00C3, 0x00C3, 0x00C2, 0x00C2, // 345-352
+    0x00C1, 0x00C1, 0x00C0, 0x00C0, 0x00BF, 0x00BF, 0x00BF, 0x00BE, // 353-360
+    0x00BE, 0x00BD, 0x00BD, 0x00BD, 0x00BC, 0x00BC, 0x00BB, 0x00BB, // 361-368
+    0x00BB, 0x00BA, 0x00BA, 0x00B9, 0x00B9, 0x00B9, 0x00B8, 0x00B8, // 369-376
+    0x00B7, 0x00B7, 0x00B7, 0x00B6, 0x00B6, 0x00B6, 0x00B5, 0x00B5, // 377-384
+    0x00B5, 0x00B4, 0x00B4, 0x00B3, 0x00B3, 0x00B3, 0x00B2, 0x00B2, // 385-392
+    0x00B2, 0x00B1, 0x00B1, 0x00B1, 0x00B0, 0x00B0, 0x00B0, 0x00AF, // 393-400
+    0x00AF, 0x00AF, 0x00AE, 0x00AE, 0x00AE, 0x00AD, 0x00AD, 0x00AD, // 401-408
+    0x00AC, 0x00AC, 0x00AC, 0x00AB, 0x00AB, 0x00AB, 0x00AB, 0x00AA, // 409-416
+    0x00AA, 0x00AA, 0x00A9, 0x00A9, 0x00A9, 0x00A8, 0x00A8, 0x00A8, // 417-424
+    0x00A8, 0x00A7, 0x00A7, 0x00A7, 0x00A6, 0x00A6, 0x00A6, 0x00A6, // 425-432
+    0x00A5, 0x00A5, 0x00A5, 0x00A4, 0x00A4, 0x00A4, 0x00A4, 0x00A3, // 433-440
+    0x00A3, 0x00A3, 0x00A3, 0x00A2, 0x00A2, 0x00A2, 0x00A2, 0x00A1, // 441-448
+    0x00A1, 0x00A1, 0x00A0, 0x00A0, 0x00A0, 0x00A0, 0x009F, 0x009F, // 449-456
+    0x009F, 0x009F, 0x009E, 0x009E, 0x009E, 0x009E, 0x009E, 0x009D, // 457-464
+    0x009D, 0x009D, 0x009D, 0x009C, 0x009C, 0x009C, 0x009C, 0x009B, // 465-472
+    0x009B, 0x009B, 0x009B, 0x009A, 0x009A, 0x009A, 0x009A, 0x009A, // 473-480
+    0x0099, 0x0099, 0x0099, 0x0099, 0x0098, 0x0098, 0x0098, 0x0098, // 481-488
+    0x0098, 0x0097, 0x0097, 0x0097, 0x0097, 0x0097, 0x0096, 0x0096, // 489-496
+    0x0096, 0x0096, 0x0096, 0x0095, 0x0095, 0x0095, 0x0095, 0x0095, // 497-504
+    0x0094, 0x0094, 0x0094, 0x0094, 0x0094, 0x0093, 0x0093, 0x0093, // 505-512
+};
+
+// Fast reciprocal using LUT - returns 1/x where x is fix16
+// For span calculations in rasterizer (x typically 0.5 to 160)
+IWRAM_CODE static inline fix16_t fast_recip(fix16_t x) {
+    if (x <= 0) return 0;
+    // For small values (< 1.0), fall back to accurate division
+    if (x < fix16_one) {
+        return fix16_div(fix16_one, x);
+    }
+    // For values >= 1.0, use LUT with linear interpolation
+    int ix = x >> 16;  // Integer part
+    if (ix > 511) return recip_lut[512];
+    // Get base value from LUT
+    u32 base = recip_lut[ix];
+    u32 next = recip_lut[ix + 1];
+    // Linear interpolation using fractional part
+    int frac = (x >> 8) & 0xFF;  // 8-bit fractional part
+    return base - (((base - next) * frac) >> 8);
 }
 
 static inline fix16_t fix16_from_int(int a) { return a << 16; }
@@ -842,7 +922,7 @@ static void vec3_copy(Vec3* dst, const Vec3* src) { dst->x = src->x; dst->y = sr
 static void vec3_set(Vec3* v, fix16_t x, fix16_t y, fix16_t z) { v->x = x; v->y = y; v->z = z; }
 static void vec3_mul(Vec3* v, fix16_t f) { v->x = fix16_mul(v->x, f); v->y = fix16_mul(v->y, f); v->z = fix16_mul(v->z, f); }
 static Vec3 vec3_minus(const Vec3* v0, const Vec3* v1) { Vec3 r = {v0->x - v1->x, v0->y - v1->y, v0->z - v1->z}; return r; }
-static fix16_t vec3_dot(const Vec3* v0, const Vec3* v1) { return fix16_mul(v0->x, v1->x) + fix16_mul(v0->y, v1->y) + fix16_mul(v0->z, v1->z); }
+IWRAM_CODE static fix16_t vec3_dot(const Vec3* v0, const Vec3* v1) { return fix16_mul(v0->x, v1->x) + fix16_mul(v0->y, v1->y) + fix16_mul(v0->z, v1->z); }
 static fix16_t vec3_length(const Vec3* v) { return fix16_sqrt(vec3_dot(v, v)); }
 static void vec3_normalize(Vec3* v) { fix16_t len = vec3_length(v); if (len > 0) { fix16_t invl = fix16_div(fix16_one, len); vec3_mul(v, invl); } }
 
@@ -899,6 +979,7 @@ static void mat_mul_vec(Vec3* res, const Mat34* m, const Vec3* v) {
     res->z = fix16_mul(v->x, m->m[8]) + fix16_mul(v->y, m->m[9]) + fix16_mul(v->z, m->m[10]);
 }
 
+IWRAM_CODE __attribute__((target("arm")))
 static void mat_mul_pos(Vec3* res, const Mat34* m, const Vec3* v) {
     res->x = fix16_mul(v->x, m->m[0]) + fix16_mul(v->y, m->m[1]) + fix16_mul(v->z, m->m[2]) + m->m[3];
     res->y = fix16_mul(v->x, m->m[4]) + fix16_mul(v->y, m->m[5]) + fix16_mul(v->z, m->m[6]) + m->m[7];
@@ -963,9 +1044,20 @@ static void decode_mesh(Mesh* mesh, fix16_t scale) {
     }
 }
 
+IWRAM_CODE __attribute__((target("arm")))
 static void transform_pos(Vec3* proj, const Mat34* mat, const Vec3* pos) {
     mat_mul_pos(proj, mat, pos);
-    fix16_t c = fix16_div(FIX_PROJ_CONST, proj->z);
+    // Perspective projection: c = -75 / z
+    // When z < 0 (in front of camera): c = -75 / z = 75 / |z| (positive)
+    fix16_t c;
+    if (proj->z < -fix16_one && proj->z > -F16(512.0)) {
+        // z is negative, so -z is positive, c = 75 / |z|
+        c = fix16_mul(F16(75.0), fast_recip(-proj->z));
+    } else if (proj->z != 0) {
+        c = fix16_div(FIX_PROJ_CONST, proj->z);
+    } else {
+        c = 0;
+    }
     proj->x = FIX_SCREEN_CENTER_X + fix16_mul(proj->x, c);
     proj->y = FIX_SCREEN_CENTER_Y - fix16_mul(proj->y, c);
     if (c > 0 && c <= F16(10.0)) proj->z = c; else proj->z = 0;
@@ -974,10 +1066,9 @@ static void transform_pos(Vec3* proj, const Mat34* mat, const Vec3* pos) {
 // Optimized rasterization using scanline interpolation (no per-pixel division)
 // Uses affine texture mapping with edge walking
 // ARM mode for faster execution (Thumb is slower for math-heavy code)
-__attribute__((target("arm")))
+IWRAM_CODE __attribute__((target("arm")))
 static void rasterize_flat_tri(Vec3* v0, Vec3* v1, Vec3* v2, fix16_t* uv0, fix16_t* uv1, fix16_t* uv2, fix16_t light) {
     // v0 is tip vertex, v1 and v2 are base vertices at same y
-    // Works for both flat-bottom (v0 at top) and flat-top (v0 at bottom) triangles
     fix16_t y0 = v0->y, y1 = v1->y;
     if (y0 == y1) return;
 
@@ -986,23 +1077,23 @@ static void rasterize_flat_tri(Vec3* v0, Vec3* v1, Vec3* v2, fix16_t* uv0, fix16
     int direction;
     if (y0 < y1) {
         y_top = y0; y_bot = y1;
-        direction = 1;  // Top to bottom
+        direction = 1;
     } else {
         y_top = y1; y_bot = y0;
-        direction = -1; // Bottom to top (for edge calculation)
+        direction = -1;
     }
 
     // Determine scanline range
-    int y_start = fix16_to_int(y_top + F16(0.5));
-    int y_end = fix16_to_int(y_bot - F16(0.5));
+    int y_start = fix16_to_int(y_top + FIX_HALF);
+    int y_end = fix16_to_int(y_bot - FIX_HALF);
     if (y_start < 0) y_start = 0;
     if (y_end >= SCREEN_HEIGHT) y_end = SCREEN_HEIGHT - 1;
     if (y_start > y_end) return;
 
-    // Pre-calculate edge gradients (one division per edge, not per pixel)
+    // Pre-calculate edge gradients using fast reciprocal LUT
     fix16_t dy = y_bot - y_top;
-    if (fix16_abs(dy) < F16(0.01)) return;
-    fix16_t inv_dy = fix16_div(fix16_one, dy);
+    if (dy < F16(0.5)) return;
+    fix16_t inv_dy = fast_recip(dy);
 
     fix16_t dx_left, dz_left, du_left, dv_left;
     fix16_t dx_right, dz_right, du_right, dv_right;
@@ -1069,10 +1160,10 @@ static void rasterize_flat_tri(Vec3* v0, Vec3* v1, Vec3* v2, fix16_t* uv0, fix16
         if (xr >= SCREEN_WIDTH) xr = SCREEN_WIDTH - 1;
 
         if (xl <= xr) {
-            // Calculate horizontal gradients for this scanline
+            // Calculate horizontal gradients using fast reciprocal LUT
             fix16_t span = x_right - x_left;
-            if (span > F16(0.5)) {
-                fix16_t inv_span = fix16_div(fix16_one, span);
+            if (span > FIX_HALF) {
+                fix16_t inv_span = fast_recip(span);
                 fix16_t du_dx = fix16_mul(u_right - u_left, inv_span);
                 fix16_t dv_dx = fix16_mul(v_right_val - v_left_val, inv_span);
 
@@ -1105,7 +1196,7 @@ static void rasterize_flat_tri(Vec3* v0, Vec3* v1, Vec3* v2, fix16_t* uv0, fix16
     }
 }
 
-__attribute__((target("arm")))
+IWRAM_CODE __attribute__((target("arm")))
 static void rasterize_tri(int index, Triangle* tris, Vec3* projs) {
     Triangle* tri = &tris[index];
     if (tri->tri[0] < 0 || tri->tri[1] < 0 || tri->tri[2] < 0 || !cur_tex) return;
@@ -1122,6 +1213,9 @@ static void rasterize_tri(int index, Triangle* tris, Vec3* projs) {
     if (max_x < 0 || min_x >= F16(SCREEN_WIDTH)) return;
     if (max_y < 0 || min_y >= F16(SCREEN_HEIGHT)) return;
 
+    // Early rejection for tiny triangles (< 1 pixel in any dimension)
+    if (max_x - min_x < fix16_one && max_y - min_y < fix16_one) return;
+
     // Backface culling
     fix16_t nz = fix16_mul(v1->x - v0->x, v2->y - v0->y) - fix16_mul(v1->y - v0->y, v2->x - v0->x);
     if (nz < 0) return;
@@ -1130,12 +1224,14 @@ static void rasterize_tri(int index, Triangle* tris, Vec3* projs) {
     if (tv1->y < tv0->y) { Vec3* t = tv1; tv1 = tv0; tv0 = t; fix16_t* tu = tuv1; tuv1 = tuv0; tuv0 = tu; }
     if (tv2->y < tv0->y) { Vec3* t = tv2; tv2 = tv0; tv0 = t; fix16_t* tu = tuv2; tuv2 = tuv0; tuv0 = tu; }
     if (tv2->y < tv1->y) { Vec3* t = tv2; tv2 = tv1; tv1 = t; fix16_t* tu = tuv2; tuv2 = tuv1; tuv1 = tu; }
-    if (tv0->y == tv2->y) return;
+    fix16_t total_dy = tv2->y - tv0->y;
+    if (total_dy < fix16_one) return;
     fix16_t light = fix16_mul(F16(15.0), vec3_dot(t_light_dir, &tri->normal));
-    fix16_t c = fix16_div(tv1->y - tv0->y, tv2->y - tv0->y);
+    // Use fast reciprocal for vertex interpolation
+    fix16_t c = fix16_mul(tv1->y - tv0->y, fast_recip(total_dy));
     Vec3 v3 = {tv0->x + fix16_mul(c, tv2->x - tv0->x), tv1->y, tv0->z + fix16_mul(c, tv2->z - tv0->z)};
     fix16_t b0 = fix16_mul(fix16_one - c, tv0->z), b1 = fix16_mul(c, tv2->z);
-    fix16_t sum = b0 + b1, invd = (sum > F16(0.001)) ? fix16_div(fix16_one, sum) : 0;
+    fix16_t sum = b0 + b1, invd = (sum > F16(0.01)) ? fast_recip(sum) : 0;
     fix16_t uv3[2] = {fix16_mul(fix16_mul(b0, tuv0[0]) + fix16_mul(b1, tuv2[0]), invd), fix16_mul(fix16_mul(b0, tuv0[1]) + fix16_mul(b1, tuv2[1]), invd)};
     if (tv1->x <= v3.x) { rasterize_flat_tri(tv0, tv1, &v3, tuv0, tuv1, uv3, light); rasterize_flat_tri(tv2, tv1, &v3, tuv2, tuv1, uv3, light); }
     else { rasterize_flat_tri(tv0, &v3, tv1, tuv0, uv3, tuv1, light); rasterize_flat_tri(tv2, &v3, tv1, tuv2, uv3, tuv1, light); }
