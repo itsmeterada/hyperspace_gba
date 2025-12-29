@@ -11,7 +11,7 @@
 #include <stdio.h>
 
 // Include sprite data early (needed for SGET_FAST macro)
-#include "hyperspace_data.h"
+#include "../hyperspace_data.h"
 
 // GBA hardware definitions
 typedef unsigned char u8;
@@ -71,6 +71,48 @@ typedef unsigned long long u64;
 #define SRAM            ((volatile u8*)0x0E000000)
 
 #define RGB15(r,g,b)    (((r)&31) | (((g)&31)<<5) | (((b)&31)<<10))
+
+// =============================================================================
+// GBA Sound Registers
+// =============================================================================
+
+// Sound control registers
+#define REG_SOUNDCNT_L  (*(volatile u16*)0x04000080)  // Channel L/R volume & enable
+#define REG_SOUNDCNT_H  (*(volatile u16*)0x04000082)  // DMA sound control
+#define REG_SOUNDCNT_X  (*(volatile u16*)0x04000084)  // Master sound enable
+
+// Channel 1 - Square wave with sweep
+#define REG_SOUND1CNT_L (*(volatile u16*)0x04000060)  // Sweep
+#define REG_SOUND1CNT_H (*(volatile u16*)0x04000062)  // Duty/Length/Envelope
+#define REG_SOUND1CNT_X (*(volatile u16*)0x04000064)  // Frequency/Control
+
+// Channel 2 - Square wave
+#define REG_SOUND2CNT_L (*(volatile u16*)0x04000068)  // Duty/Length/Envelope
+#define REG_SOUND2CNT_H (*(volatile u16*)0x0400006C)  // Frequency/Control
+
+// Channel 3 - Wave output (not used for now)
+#define REG_SOUND3CNT_L (*(volatile u16*)0x04000070)
+#define REG_SOUND3CNT_H (*(volatile u16*)0x04000072)
+#define REG_SOUND3CNT_X (*(volatile u16*)0x04000074)
+
+// Channel 4 - Noise
+#define REG_SOUND4CNT_L (*(volatile u16*)0x04000078)  // Length/Envelope
+#define REG_SOUND4CNT_H (*(volatile u16*)0x0400007C)  // Frequency/Control
+
+// Sound enable flags
+#define SOUND_ENABLE    0x0080  // Master sound enable
+#define SOUND1_ENABLE   0x0001
+#define SOUND2_ENABLE   0x0002
+#define SOUND3_ENABLE   0x0004
+#define SOUND4_ENABLE   0x0008
+#define SOUND1_L        0x0100
+#define SOUND1_R        0x1000
+#define SOUND2_L        0x0200
+#define SOUND2_R        0x2000
+#define SOUND3_L        0x0400
+#define SOUND3_R        0x4000
+#define SOUND4_L        0x0800
+#define SOUND4_R        0x8000
 
 // Mode 5 framebuffer dimensions (scaled to fill 240x160 screen)
 #define SCREEN_WIDTH    160
@@ -390,7 +432,322 @@ static void save_cart_data(void) {
 
 static s32 dget(int n) { if (n >= 0 && n < 64) return cart_data[n]; return 0; }
 static void dset(int n, s32 v) { if (n >= 0 && n < 64 && cart_data[n] != v) cart_data[n] = v; }
-static void sfx(int n, int channel) { /* No sound */ }
+
+// =============================================================================
+// GBA Sound System (PICO-8 Compatible)
+// =============================================================================
+
+// Forward declaration - sound is optional and off by default
+static int sound_enabled;
+
+// PICO-8 frequency table (Hz) for notes 0-63
+static const u16 p8_freq_table[64] = {
+    65, 69, 73, 78, 82, 87, 92, 98,
+    104, 110, 117, 123, 131, 139, 147, 156,
+    165, 175, 185, 196, 208, 220, 233, 247,
+    262, 277, 294, 311, 330, 349, 370, 392,
+    415, 440, 466, 494, 523, 554, 587, 622,
+    659, 698, 740, 784, 831, 880, 932, 988,
+    1047, 1109, 1175, 1245, 1319, 1397, 1480, 1568,
+    1661, 1760, 1865, 1976, 2093, 2217, 2349, 2489
+};
+
+// Convert PICO-8 pitch to GBA frequency register value
+// GBA freq register: actual_freq = 131072 / (2048 - register_value)
+// So: register_value = 2048 - 131072 / actual_freq
+static u16 p8_pitch_to_gba_freq(u8 pitch) {
+    if (pitch >= 64) pitch = 63;
+    u16 hz = p8_freq_table[pitch];
+    if (hz < 64) return 0;  // Too low for GBA
+    u16 gba_freq = 2048 - (131072 / hz);
+    if (gba_freq > 2047) gba_freq = 2047;
+    return gba_freq;
+}
+
+// PICO-8 SFX data structure (same as original)
+typedef struct {
+    u8 speed;
+    u8 loop_start;
+    u8 loop_end;
+    u8 notes[32][4];  // pitch, waveform, volume, effect
+} P8SFX;
+
+// Hyperspace SFX definitions (exact PICO-8 data)
+static const P8SFX hyperspace_sfx[] = {
+    // SFX 0: Laser fire (descending saw wave)
+    {1, 0, 13, {
+        {50, 2, 3, 0}, {51, 2, 3, 0}, {51, 2, 3, 0}, {49, 2, 1, 0},
+        {46, 2, 3, 0}, {41, 2, 3, 0}, {36, 2, 4, 0}, {34, 2, 3, 0},
+        {32, 2, 3, 0}, {29, 2, 3, 0}, {28, 2, 3, 0}, {28, 2, 2, 0},
+        {28, 2, 1, 0}, {28, 2, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
+        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
+        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
+        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
+        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}
+    }},
+    // SFX 1: Player damage / barrel roll (noise)
+    {5, 0, 0, {
+        {36, 6, 7, 0}, {36, 6, 7, 0}, {39, 6, 7, 0}, {42, 6, 7, 0},
+        {49, 6, 7, 0}, {56, 6, 7, 0}, {63, 6, 7, 0}, {63, 6, 7, 0},
+        {48, 6, 7, 0}, {41, 6, 7, 0}, {36, 6, 7, 0}, {32, 6, 7, 0},
+        {30, 6, 6, 0}, {28, 6, 6, 0}, {27, 6, 5, 0}, {26, 6, 5, 0},
+        {25, 6, 4, 0}, {25, 6, 4, 0}, {24, 6, 3, 0}, {25, 6, 3, 0},
+        {26, 6, 2, 0}, {28, 6, 2, 0}, {32, 6, 1, 0}, {35, 6, 1, 0},
+        {10, 6, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
+        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}
+    }},
+    // SFX 2: Hit enemy / explosion (mixed noise)
+    {3, 0, 0, {
+        {45, 6, 7, 0}, {41, 4, 7, 0}, {36, 4, 7, 0}, {25, 6, 7, 0},
+        {30, 4, 7, 0}, {32, 6, 7, 0}, {29, 6, 7, 0}, {13, 6, 7, 0},
+        {22, 6, 7, 0}, {20, 4, 7, 0}, {16, 4, 7, 0}, {15, 4, 7, 0},
+        {19, 6, 7, 0}, {11, 4, 7, 0}, {9, 4, 7, 0}, {7, 6, 6, 0},
+        {7, 4, 5, 0}, {5, 4, 4, 0}, {8, 6, 3, 0}, {2, 4, 2, 0},
+        {1, 4, 1, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
+        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
+        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}
+    }},
+    // SFX 3: (unused placeholder)
+    {1, 0, 0, {
+        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
+        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
+        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
+        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
+        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
+        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
+        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
+        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}
+    }},
+    // SFX 4: (unused placeholder)
+    {1, 0, 0, {
+        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
+        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
+        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
+        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
+        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
+        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
+        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
+        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}
+    }},
+    // SFX 5: Bonus pickup (pulse wave descending)
+    {1, 0, 0, {
+        {44, 4, 7, 0}, {40, 4, 7, 0}, {35, 4, 7, 0}, {32, 4, 7, 0},
+        {28, 4, 7, 0}, {26, 4, 7, 0}, {23, 4, 6, 0}, {21, 4, 4, 0},
+        {21, 4, 2, 0}, {20, 4, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
+        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
+        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
+        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
+        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
+        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}
+    }},
+    // SFX 6: Boss spawn (low square)
+    {24, 0, 0, {
+        {0, 0, 0, 0}, {7, 3, 6, 0}, {20, 1, 4, 0}, {7, 3, 6, 0},
+        {20, 1, 4, 0}, {26, 3, 7, 0}, {20, 1, 4, 0}, {27, 3, 7, 0},
+        {1, 4, 4, 0}, {23, 3, 7, 0}, {23, 3, 7, 0}, {23, 3, 7, 0},
+        {23, 3, 7, 0}, {23, 3, 6, 0}, {23, 3, 5, 0}, {23, 3, 0, 0},
+        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
+        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
+        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
+        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}
+    }},
+    // SFX 7: Boss damage (saw wave)
+    {32, 0, 0, {
+        {13, 2, 7, 0}, {13, 2, 7, 0}, {8, 2, 7, 0}, {8, 2, 7, 0},
+        {4, 2, 7, 0}, {4, 2, 7, 0}, {1, 2, 7, 0}, {1, 2, 7, 0},
+        {1, 2, 7, 0}, {1, 2, 7, 0}, {1, 2, 7, 0}, {1, 2, 7, 0},
+        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
+        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
+        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
+        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
+        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}
+    }}
+};
+
+#define NUM_GBA_SFX (sizeof(hyperspace_sfx) / sizeof(hyperspace_sfx[0]))
+
+// Sound channel state
+typedef struct {
+    const P8SFX *sfx;
+    u8 note_index;
+    u8 frame_count;
+    bool active;
+} SoundChannel;
+
+static SoundChannel sound_channels[4];
+static bool sound_initialized = false;
+
+static void sound_init(void) {
+    // Enable sound
+    REG_SOUNDCNT_X = SOUND_ENABLE;
+
+    // Set volume and enable all channels to both L/R
+    REG_SOUNDCNT_L = 0x7777 |  // Max volume
+                     SOUND1_L | SOUND1_R |
+                     SOUND2_L | SOUND2_R |
+                     SOUND4_L | SOUND4_R;
+
+    // PSG/FIFO ratio
+    REG_SOUNDCNT_H = 0x0002;  // PSG at 100%
+
+    // Initialize channels
+    for (int i = 0; i < 4; i++) {
+        sound_channels[i].active = false;
+        sound_channels[i].sfx = NULL;
+    }
+
+    sound_initialized = true;
+}
+
+// Silence a hardware channel
+static void silence_hw_channel(int hw_channel) {
+    if (hw_channel == 0) {
+        REG_SOUND1CNT_H = 0;
+        REG_SOUND1CNT_X = 0;
+    } else if (hw_channel == 1) {
+        REG_SOUND2CNT_L = 0;
+        REG_SOUND2CNT_H = 0;
+    } else {
+        REG_SOUND4CNT_L = 0;
+        REG_SOUND4CNT_H = 0;
+    }
+}
+
+// Play a PICO-8 note on a hardware channel
+// PICO-8 waveforms: 0=triangle, 1=tilted saw, 2=saw, 3=square, 4=pulse, 5=organ, 6=noise, 7=phaser
+static void play_p8_note(int hw_channel, u8 pitch, u8 waveform, u8 volume) {
+    if (volume == 0) {
+        silence_hw_channel(hw_channel);
+        return;
+    }
+
+    // Convert PICO-8 pitch to GBA frequency
+    u16 gba_freq = p8_pitch_to_gba_freq(pitch);
+
+    // Map PICO-8 volume (0-7) to GBA envelope (0-15)
+    u16 gba_vol = volume * 2;
+    if (gba_vol > 15) gba_vol = 15;
+
+    // PICO-8 waveform 6 is noise - use GBA channel 4
+    if (waveform == 6) {
+        // Noise channel - convert pitch to noise frequency
+        // Higher pitch = faster noise (lower divider value)
+        u16 noise_div = 7 - (pitch >> 3);  // Map 0-63 to 7-0
+        if (noise_div > 7) noise_div = 7;
+        REG_SOUND4CNT_L = (gba_vol << 12);  // Envelope
+        REG_SOUND4CNT_H = 0x8000 | (noise_div << 4);  // Frequency and restart
+    } else if (hw_channel == 0) {
+        // GBA Channel 1 - Square with sweep
+        // Map PICO-8 waveform to duty cycle: 0-2=25%, 3-4=50%, 5-7=75%
+        u16 duty;
+        if (waveform <= 2) duty = 0x0000;       // 12.5% (close to triangle/saw)
+        else if (waveform <= 4) duty = 0x0080;  // 50% (square/pulse)
+        else duty = 0x00C0;                     // 75% (organ/phaser)
+
+        REG_SOUND1CNT_L = 0x0000;  // No sweep
+        REG_SOUND1CNT_H = duty | (gba_vol << 12);  // Duty + envelope
+        REG_SOUND1CNT_X = 0x8000 | gba_freq;  // Frequency and restart
+    } else if (hw_channel == 1) {
+        // GBA Channel 2 - Square
+        u16 duty;
+        if (waveform <= 2) duty = 0x0000;       // 12.5%
+        else if (waveform <= 4) duty = 0x0080;  // 50%
+        else duty = 0x00C0;                     // 75%
+
+        REG_SOUND2CNT_L = duty | (gba_vol << 12);  // Duty + envelope
+        REG_SOUND2CNT_H = 0x8000 | gba_freq;  // Frequency and restart
+    } else {
+        // Channel 2+ uses noise channel for non-noise waveforms too
+        // (fallback - shouldn't normally happen)
+        u16 noise_div = 7 - (pitch >> 3);
+        if (noise_div > 7) noise_div = 7;
+        REG_SOUND4CNT_L = (gba_vol << 12);
+        REG_SOUND4CNT_H = 0x8000 | (noise_div << 4);
+    }
+}
+
+static void sfx(int n, int channel) {
+    // Check if sound is enabled
+    if (!sound_enabled) return;
+
+    if (!sound_initialized) sound_init();
+
+    if (channel < 0 || channel >= 4) return;
+
+    // Map software channel to hardware channel
+    // Channel 0 -> GBA Ch1, Channel 1 -> GBA Ch2, Channel 2/3 -> GBA Ch4 (noise)
+    int hw_channel = (channel >= 2) ? 2 : channel;
+
+    if (n == -1) {
+        // Stop this channel completely
+        sound_channels[channel].active = false;
+        silence_hw_channel(hw_channel);
+        return;
+    }
+
+    if (n == -2) {
+        // Stop all channels completely
+        for (int i = 0; i < 4; i++) {
+            sound_channels[i].active = false;
+        }
+        silence_hw_channel(0);
+        silence_hw_channel(1);
+        silence_hw_channel(2);
+        return;
+    }
+
+    if (n < 0 || n >= (int)NUM_GBA_SFX) return;
+
+    // Start playing SFX
+    SoundChannel *ch = &sound_channels[channel];
+    ch->sfx = &hyperspace_sfx[n];
+    ch->note_index = 0;
+    ch->frame_count = 0;
+    ch->active = true;
+
+    // Play first note immediately
+    const u8 *note = ch->sfx->notes[0];
+    if (note[2] > 0) {  // If volume > 0
+        play_p8_note(hw_channel, note[0], note[1], note[2]);
+    }
+}
+
+// Call this every frame to advance SFX playback
+static void sound_update(void) {
+    if (!sound_enabled || !sound_initialized) return;
+
+    for (int i = 0; i < 4; i++) {
+        SoundChannel *ch = &sound_channels[i];
+        if (!ch->active || !ch->sfx) continue;
+
+        // Map software channel to hardware channel
+        int hw_channel = (i >= 2) ? 2 : i;
+
+        ch->frame_count++;
+
+        if (ch->frame_count >= ch->sfx->speed) {
+            ch->frame_count = 0;
+            ch->note_index++;
+
+            // P8SFX has 32 notes max, end when we reach 32 or volume is 0
+            if (ch->note_index >= 32) {
+                // SFX finished
+                ch->active = false;
+                silence_hw_channel(hw_channel);
+            } else {
+                const u8 *note = ch->sfx->notes[ch->note_index];
+                if (note[2] == 0) {
+                    // Volume 0 = end of sound
+                    ch->active = false;
+                    silence_hw_channel(hw_channel);
+                } else {
+                    // Play next note
+                    play_p8_note(hw_channel, note[0], note[1], note[2]);
+                }
+            }
+        }
+    }
+}
 static fix16_t sym_random_fix(fix16_t f) { return f - rnd_fix(fix16_mul(f, FIX_TWO)); }
 static int get_random_idx(int max) { return flr_fix(rnd_fix(fix16_from_int(max))); }
 
@@ -884,6 +1241,7 @@ static void spawn_nme_ship(int type) {
                 mid_fix(F16(-100.0), sym_random_fix(F16(50.0)) + ship_y, F16(100.0)), desc_bounds - F16(200.0)};
     Enemy* nme = spawn_nme(type, pos);
     if (nme) { vec3_set(&nme->spd, 0, 0, F16(8.0)); vec3_copy(&nme->waypoint, &nme->pos); nme->waypoint.z = desc_bounds; }
+    if (type == 4) sfx(6, 1);  // Boss spawn sound (square channel)
 }
 
 static void hit_ship(Vec3* pos, fix16_t sqr_size) {
@@ -895,6 +1253,7 @@ static void hit_ship(Vec3* pos, fix16_t sqr_size) {
             roll_f += fix16_mul(fix16_mul(dx, n), F16(0.05));
             pitch_f -= fix16_mul(fix16_mul(dy, n), F16(0.02));
             hit_t = 0; vec3_copy(&hit_pos, pos); life--;
+            sfx(1, 0);  // Player hit sound
             if (life == 0) fade_ratio = 0;
         }
     }
@@ -1071,8 +1430,9 @@ static void update_collisions(void) {
                 fix16_t radius = nme_radius[nme->type - 1];
                 if (fix16_mul(dx, dx) + fix16_mul(dy, dy) <= fix16_mul(fix16_mul(radius, radius), F16(0.04))) {
                     nme->life--;
-                    if (nme->life == 0) { nme->hit_t = -1; score += nme_score[nme->type - 1]; }
-                    else { vec3_copy(&nme->hit_pos, lp0); nme->hit_t = 0; }
+                    sfx(2, 2);  // Hit/explosion sound (noise channel)
+                    if (nme->life == 0) { nme->hit_t = -1; score += nme_score[nme->type - 1]; sfx(5, 1); }  // Bonus sound on kill
+                    else { vec3_copy(&nme->hit_pos, lp0); nme->hit_t = 0; if (nme->type == 4) sfx(7, 2); }  // Boss damage
                     remove_laser(lasers, &num_lasers, laser_idx); continue;
                 }
             }
@@ -1093,7 +1453,7 @@ static void game_update(void) {
         fix16_t mul_spd = cur_thrust;
         if (non_inverted_y) dy = -dy;
         if (barrel_cur_t > F16(-1.0) || life <= 0) { dx = dy = 0; }
-        if (btn(5) && dx != 0 && barrel_cur_t < 0) { barrel_cur_t = 0; barrel_dir = dx > 0 ? 1 : -1; }
+        if (btn(5) && dx != 0 && barrel_cur_t < 0) { barrel_cur_t = 0; barrel_dir = dx > 0 ? 1 : -1; sfx(4, 1); }
         if (barrel_cur_t >= 0) { barrel_cur_t += fix16_one; dx = fix16_from_int(barrel_dir * 9); dy = 0; mul_spd = F16(0.1); if (barrel_cur_t > F16(5.0)) barrel_cur_t = F16(-20.0); }
         if (fix16_abs(ship_x) > F16(100.0)) dx = fix16_mul(-sgn_fix(ship_x), F16(0.4));
         if (fix16_abs(ship_y) > F16(100.0)) dy = fix16_mul(-sgn_fix(ship_y), F16(0.4));
@@ -1118,11 +1478,12 @@ static void game_update(void) {
     } else if (cur_mode == 0) {
         if (dx == 0 && dy == 0) dx = F16(-0.25);
         cam_angle_z += fix16_mul(dx, F16(0.007)); cam_angle_x -= fix16_mul(dy, F16(0.007));
-        if (btnp(5)) { cur_mode = 3; manual_fire = dget(1); non_inverted_y = dget(2); }
+        if (btnp(5)) { cur_mode = 3; manual_fire = dget(1); non_inverted_y = dget(2); sound_enabled = dget(3); }
     } else if (cur_mode == 3) {
         cam_angle_z -= F16(0.00175);
         if (btnp(0) || btnp(1)) { manual_fire = 1 - manual_fire; dset(1, manual_fire); }
         if (btnp(2) || btnp(3)) { non_inverted_y = 1 - non_inverted_y; dset(2, non_inverted_y); }
+        if (btnp(4)) { sound_enabled = 1 - sound_enabled; dset(3, sound_enabled); }
         if (btnp(5)) {
             src_cam_angle_z = normalize_angle(cam_angle_z); src_cam_angle_x = normalize_angle(cam_angle_x);
             src_cam_x = cam_x; src_cam_y = cam_y;
@@ -1146,7 +1507,11 @@ static void game_update(void) {
         }
     }
 
+    bool prev_laser_on = laser_on;
     laser_on = (cur_mode != 2 && btn(4)) || ((btn(4) || (manual_fire != 1 && tgt_pos)) && barrel_cur_t < 0 && hit_t == -1);
+    // Laser sound effects
+    if (laser_on && !prev_laser_on) sfx(0, 0);
+    else if (!laser_on && prev_laser_on) sfx(-2, 0);
     Mat34 trans, rot;
     mat_translation(&trans, 0, 0, -cam_depth); mat_rotx(&rot, cam_angle_x); mat_mul(&cam_mat, &trans, &rot);
     mat_roty(&rot, cam_angle_z); mat_mul(&cam_mat, &cam_mat, &rot);
@@ -1271,9 +1636,9 @@ static void game_draw(void) {
         spr(16, 99, 1, 8, 1); clip_set(99, 1, life * 15, 7); spr(0, 99, 1, 8, 1); clip_reset();
     } else if (cur_mode != 1) { print_3d("HYPERSPACE", 58, 1); print_3d("GBA Port by itsmeterada", 34, 8);
         if (cur_mode == 0) { print_3d("PRESS L/R", 58, 100); char buf[32]; snprintf(buf, 32, "BEST %d", best_score); print_3d(buf, 1, 120); }
-        else { print_3d("PRESS L/R", 50, 55); print_3d("DPAD:OPT", 50, 65);
-            const char* opt[] = {"AUTO", "MANUAL", "INV Y", "NORM Y"};
-            print_3d(opt[manual_fire], 9, 110); print_3d(opt[non_inverted_y + 2], 9, 120); } }
+        else { print_3d("PRESS L/R", 50, 55); print_3d("DPAD:OPT A:SND", 38, 65);
+            const char* opt[] = {"AUTO", "MANUAL", "INV Y", "NORM Y", "SND OFF", "SND ON"};
+            print_3d(opt[manual_fire], 9, 100); print_3d(opt[non_inverted_y + 2], 9, 110); print_3d(opt[sound_enabled + 4], 9, 120); } }
     if (fade_ratio > 0) { Vec3 center = {FIX_SCREEN_CENTER_X, FIX_SCREEN_CENTER_Y, fix16_one}; draw_explosion(&center, fade_ratio); }
 }
 
@@ -1346,9 +1711,11 @@ int main(void) {
     REG_BG2Y = 0;           // Start from top edge
 
     game_init();
+    sound_init();  // Initialize sound system
     while (1) {
         update_input();
         game_update();
+        sound_update();  // Update sound playback
         game_draw();
         vsync();        // Wait for VBlank
         flip_screen();  // Flip during VBlank to avoid tearing
