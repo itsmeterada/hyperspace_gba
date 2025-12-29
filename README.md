@@ -283,6 +283,11 @@ gba/
 - [Hyperspace SDL2](https://github.com/itsmeterada/hyperspace) - SDL2 port for desktop platforms (Windows, macOS, Linux)
 - [Hyperspace for Thumby Color](https://github.com/itsmeterada/hyperspace_thumbycolor) - Port for TinyCircuits Thumby Color (RP2350, 128x128 display)
 
+## Technical Informations
+
+- [ARM7TDMI instructions](/https://users.ece.utexas.edu/~mcdermot/arch/articles/ARM/arm7tdmi_instruction_set_reference.pdf)
+
+
 ## License
 
 This port is based on the original PICO-8 game by J-Fry.
