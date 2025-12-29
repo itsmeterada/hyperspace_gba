@@ -286,6 +286,7 @@ gba/
 ## Technical Informations
 
 - [ARM7TDMI instructions](/https://users.ece.utexas.edu/~mcdermot/arch/articles/ARM/arm7tdmi_instruction_set_reference.pdf)
+- [mGBA - Game Boy Advanced Emulator](https://mgba.io/)
 
 
 ## License
