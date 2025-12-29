@@ -1206,6 +1206,8 @@ static void init_main(void) {
     life = 4; hit_t = -1; barrel_cur_t = F16(-1.0); laser_on = false;
     global_t = 0; game_spd = fix16_one; cur_nme_t = 0;
     cur_sequencer_x = cur_sequencer_y = 96; next_sequencer_t = 0;
+    // Free all enemy projection arrays before resetting count
+    for (int i = 0; i < num_enemies; i++) { if (enemies[i].proj) free(enemies[i].proj); enemies[i].proj = 0; }
     num_lasers = num_nme_lasers = num_enemies = nb_nme_ship = 0;
     waiting_nme_clear = spawn_asteroids = false; fade_ratio = F16(-1.0);
     roll_angle = roll_spd = roll_f = pitch_angle = pitch_spd = pitch_f = cur_thrust = 0;
@@ -1229,7 +1231,9 @@ static Enemy* spawn_nme(int type, Vec3 pos) {
     if (num_enemies >= MAX_ENEMIES) return 0;
     Enemy* nme = &enemies[num_enemies];
     vec3_copy(&nme->pos, &pos); nme->type = type;
-    nme->proj = nme_meshes[type - 1].projected;
+    // Allocate individual projection array for each enemy (fixes disappearing bug)
+    int num_verts = nme_meshes[type - 1].num_vertices;
+    nme->proj = (Vec3*)calloc(num_verts > 0 ? num_verts : 1, sizeof(Vec3));
     nme->life = nme_life[type - 1]; nme->hit_t = -1;
     nme->rot_x = nme->rot_y = 0; num_enemies++; return nme;
 }
@@ -1405,7 +1409,12 @@ static void update_enemies(void) {
         if (nme->pos.z > 0) { hit_ship(&nme->pos, F16(2.5)); del = true; }
         if (nme->life <= 0) { nme->life--; if (nme->life < -15) del = true; }
         if (nme->hit_t > -1) { nme->hit_t++; if (nme->hit_t > 5) nme->hit_t = -1; }
-        if (del) { if (nme->type > 1) nb_nme_ship--; enemies[i] = enemies[num_enemies - 1]; num_enemies--; i--; }
+        if (del) {
+            if (nme->type > 1) nb_nme_ship--;
+            if (nme->proj) free(nme->proj);  // Free projection array before replacing
+            enemies[i] = enemies[num_enemies - 1];
+            num_enemies--; i--;
+        }
     }
     cur_nme_t -= fix16_one;
     if (spawn_asteroids && cur_nme_t <= 0) {
