@@ -310,8 +310,8 @@ EWRAM_DATA static u8 map_memory[0x1000];
 static u16 palette_map[16];  // Now stores RGB555 colors directly
 static u16 draw_color_rgb = 0x7FFF;
 static u32 rnd_state = 1;
-static bool btn_state[6] = {false};
-static bool btn_prev[6] = {false};
+static bool btn_state[7] = {false};
+static bool btn_prev[7] = {false};
 EWRAM_DATA static s32 cart_data[64];
 static int current_page = 0;
 static volatile u16* vram_buffer;  // Points to back buffer
@@ -1596,13 +1596,13 @@ static void game_update(void) {
     } else if (cur_mode == 0) {
         if (dx == 0 && dy == 0) dx = F16(-0.25);
         cam_angle_z += fix16_mul(dx, F16(0.007)); cam_angle_x -= fix16_mul(dy, F16(0.007));
-        if (btnp(5)) { cur_mode = 3; manual_fire = dget(1); non_inverted_y = dget(2); sound_enabled = dget(3); }
+        if (btnp(6)) { cur_mode = 3; manual_fire = dget(1); non_inverted_y = dget(2); sound_enabled = dget(3); }
     } else if (cur_mode == 3) {
         cam_angle_z -= F16(0.00175);
         if (btnp(0) || btnp(1)) { manual_fire = 1 - manual_fire; dset(1, manual_fire); }
         if (btnp(2) || btnp(3)) { non_inverted_y = 1 - non_inverted_y; dset(2, non_inverted_y); }
         if (btnp(4)) { sound_enabled = 1 - sound_enabled; dset(3, sound_enabled); }
-        if (btnp(5)) {
+        if (btnp(6)) {
             src_cam_angle_z = normalize_angle(cam_angle_z); src_cam_angle_x = normalize_angle(cam_angle_x);
             src_cam_x = cam_x; src_cam_y = cam_y;
             dst_cam_x = fix16_mul(F16(1.05), ship_x); dst_cam_y = ship_y + F16(11.5);
@@ -1777,8 +1777,8 @@ static void game_draw(void) {
     if (cur_mode == 2) { char buf[32]; snprintf(buf, 32, "SCORE %d", score); print_3d(buf, 1, 1);
         spr(16, 99, 1, 8, 1); clip_set(99, 1, life * 15, 7); spr(0, 99, 1, 8, 1); clip_reset();
     } else if (cur_mode != 1) { print_3d("HYPERSPACE", 58, 1); print_3d("GBA Port by itsmeterada", 34, 8);
-        if (cur_mode == 0) { print_3d("PRESS L/R", 58, 100); char buf[32]; snprintf(buf, 32, "BEST %d", best_score); print_3d(buf, 1, 120); }
-        else { print_3d("PRESS L/R", 50, 55); print_3d("DPAD:OPT A:SND", 38, 65);
+        if (cur_mode == 0) { print_3d("PRESS START", 54, 100); char buf[32]; snprintf(buf, 32, "BEST %d", best_score); print_3d(buf, 1, 120); }
+        else { print_3d("PRESS START", 46, 55); print_3d("DPAD:OPT A:SND", 38, 65);
             const char* opt[] = {"AUTO", "MANUAL", "INV Y", "NORM Y", "SND OFF", "SND ON"};
             print_3d(opt[manual_fire], 9, 100); print_3d(opt[non_inverted_y + 2], 9, 110); print_3d(opt[sound_enabled + 4], 9, 120); } }
     if (fade_ratio > 0) { Vec3 center = {FIX_SCREEN_CENTER_X, FIX_SCREEN_CENTER_Y, fix16_one}; draw_explosion(&center, fade_ratio); }
@@ -1799,10 +1799,11 @@ static void flip_screen(void) {
 
 static void update_input(void) {
     u16 keys = ~REG_KEYINPUT;
-    for (int i = 0; i < 6; i++) btn_prev[i] = btn_state[i];
+    for (int i = 0; i < 7; i++) btn_prev[i] = btn_state[i];
     btn_state[0] = (keys & KEY_LEFT) != 0; btn_state[1] = (keys & KEY_RIGHT) != 0;
     btn_state[2] = (keys & KEY_UP) != 0; btn_state[3] = (keys & KEY_DOWN) != 0;
     btn_state[4] = (keys & (KEY_A | KEY_B)) != 0; btn_state[5] = (keys & (KEY_L | KEY_R)) != 0;
+    btn_state[6] = (keys & KEY_START) != 0;
 }
 
 static void load_embedded_data(void) {

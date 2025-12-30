@@ -44,12 +44,22 @@ The output ROM will be `hyperspace.gba`.
 
 ## Controls
 
+### In Game
+
 | Button | Action |
 |--------|--------|
 | D-Pad | Move ship |
-| A | Fire laser |
-| B | Fire laser |
-| START | Start game / Pause |
+| A / B | Fire laser |
+| L / R | Barrel roll (dodge) |
+
+### Title / Options Screen
+
+| Button | Action |
+|--------|--------|
+| START | Start game / Confirm |
+| D-Pad Left/Right | Toggle fire mode (AUTO/MANUAL) |
+| D-Pad Up/Down | Toggle Y-axis (INV Y/NORM Y) |
+| A | Toggle sound (ON/OFF) |
 
 ## Technical Details
 
