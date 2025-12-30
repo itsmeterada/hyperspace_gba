@@ -90,10 +90,11 @@ typedef unsigned long long u64;
 #define REG_SOUND2CNT_L (*(volatile u16*)0x04000068)  // Duty/Length/Envelope
 #define REG_SOUND2CNT_H (*(volatile u16*)0x0400006C)  // Frequency/Control
 
-// Channel 3 - Wave output (not used for now)
-#define REG_SOUND3CNT_L (*(volatile u16*)0x04000070)
-#define REG_SOUND3CNT_H (*(volatile u16*)0x04000072)
-#define REG_SOUND3CNT_X (*(volatile u16*)0x04000074)
+// Channel 3 - Wave output (for saw/triangle waveforms)
+#define REG_SOUND3CNT_L (*(volatile u16*)0x04000070)  // Stop/Bank/Enable
+#define REG_SOUND3CNT_H (*(volatile u16*)0x04000072)  // Length/Volume
+#define REG_SOUND3CNT_X (*(volatile u16*)0x04000074)  // Frequency/Control
+#define REG_WAVE_RAM    ((volatile u32*)0x04000090)   // 16 bytes wave pattern
 
 // Channel 4 - Noise
 #define REG_SOUND4CNT_L (*(volatile u16*)0x04000078)  // Length/Envelope
@@ -566,18 +567,18 @@ typedef struct {
     u8 notes[32][4];  // pitch, waveform, volume, effect
 } P8SFX;
 
-// Hyperspace SFX definitions (exact PICO-8 data)
+// Hyperspace SFX definitions (extracted from PICO-8 cartridge)
 static const P8SFX hyperspace_sfx[] = {
     // SFX 0: Laser fire (descending saw wave)
     {1, 0, 13, {
         {50, 2, 3, 0}, {51, 2, 3, 0}, {51, 2, 3, 0}, {49, 2, 1, 0},
         {46, 2, 3, 0}, {41, 2, 3, 0}, {36, 2, 4, 0}, {34, 2, 3, 0},
         {32, 2, 3, 0}, {29, 2, 3, 0}, {28, 2, 3, 0}, {28, 2, 2, 0},
-        {28, 2, 1, 0}, {28, 2, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
-        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
-        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
-        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
-        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}
+        {28, 2, 1, 0}, {28, 2, 0, 0}, {28, 0, 0, 0}, {0, 0, 0, 0},
+        {50, 4, 0, 0}, {52, 4, 0, 0}, {52, 4, 0, 0}, {49, 4, 0, 0},
+        {46, 4, 0, 0}, {41, 4, 0, 0}, {36, 4, 0, 0}, {34, 4, 0, 0},
+        {32, 4, 0, 0}, {29, 4, 0, 0}, {28, 4, 0, 0}, {28, 4, 0, 0},
+        {28, 4, 0, 0}, {1, 4, 0, 0}, {1, 4, 0, 0}, {1, 4, 0, 0}
     }},
     // SFX 1: Player damage / barrel roll (noise)
     {5, 0, 0, {
@@ -587,8 +588,8 @@ static const P8SFX hyperspace_sfx[] = {
         {30, 6, 6, 0}, {28, 6, 6, 0}, {27, 6, 5, 0}, {26, 6, 5, 0},
         {25, 6, 4, 0}, {25, 6, 4, 0}, {24, 6, 3, 0}, {25, 6, 3, 0},
         {26, 6, 2, 0}, {28, 6, 2, 0}, {32, 6, 1, 0}, {35, 6, 1, 0},
-        {10, 6, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
-        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}
+        {10, 6, 0, 0}, {11, 6, 0, 0}, {13, 6, 0, 0}, {16, 6, 0, 0},
+        {18, 6, 0, 0}, {20, 6, 0, 0}, {23, 6, 0, 0}, {24, 6, 0, 0}
     }},
     // SFX 2: Hit enemy / explosion (mixed noise)
     {3, 0, 0, {
@@ -597,24 +598,24 @@ static const P8SFX hyperspace_sfx[] = {
         {22, 6, 7, 0}, {20, 4, 7, 0}, {16, 4, 7, 0}, {15, 4, 7, 0},
         {19, 6, 7, 0}, {11, 4, 7, 0}, {9, 4, 7, 0}, {7, 6, 6, 0},
         {7, 4, 5, 0}, {5, 4, 4, 0}, {8, 6, 3, 0}, {2, 4, 2, 0},
-        {1, 4, 1, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
-        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
-        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}
+        {1, 4, 1, 0}, {12, 6, 0, 0}, {5, 6, 0, 0}, {1, 6, 0, 0},
+        {1, 6, 0, 0}, {1, 6, 0, 0}, {3, 6, 0, 0}, {1, 6, 0, 0},
+        {2, 6, 0, 0}, {1, 6, 0, 0}, {1, 6, 0, 0}, {0, 0, 0, 0}
     }},
-    // SFX 3: (unused placeholder)
+    // SFX 3: Warp sound (triangle/saw sweep)
     {1, 0, 0, {
-        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
-        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
-        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
-        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
-        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
-        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
-        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
-        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}
+        {60, 3, 7, 0}, {60, 0, 7, 0}, {55, 1, 7, 0}, {57, 0, 7, 0},
+        {54, 0, 7, 0}, {51, 0, 7, 0}, {47, 1, 7, 0}, {48, 0, 7, 0},
+        {41, 0, 7, 0}, {34, 0, 7, 0}, {32, 0, 7, 0}, {27, 0, 7, 0},
+        {23, 0, 7, 0}, {29, 1, 7, 0}, {20, 0, 7, 0}, {19, 0, 7, 0},
+        {18, 0, 7, 0}, {18, 0, 7, 0}, {19, 0, 7, 0}, {21, 0, 7, 0},
+        {18, 1, 7, 0}, {23, 0, 7, 0}, {18, 1, 7, 0}, {30, 0, 7, 0},
+        {39, 0, 7, 0}, {44, 0, 7, 0}, {53, 0, 7, 0}, {54, 0, 7, 0},
+        {28, 1, 7, 0}, {33, 1, 7, 0}, {46, 1, 7, 0}, {0, 0, 0, 0}
     }},
-    // SFX 4: (unused placeholder)
-    {1, 0, 0, {
-        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
+    // SFX 4: Barrel roll (short pulse)
+    {1, 0, 13, {
+        {44, 4, 4, 0}, {18, 0, 4, 0}, {1, 0, 2, 0}, {16, 0, 0, 0},
         {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
         {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
         {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
@@ -627,21 +628,21 @@ static const P8SFX hyperspace_sfx[] = {
     {1, 0, 0, {
         {44, 4, 7, 0}, {40, 4, 7, 0}, {35, 4, 7, 0}, {32, 4, 7, 0},
         {28, 4, 7, 0}, {26, 4, 7, 0}, {23, 4, 6, 0}, {21, 4, 4, 0},
-        {21, 4, 2, 0}, {20, 4, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
+        {21, 4, 2, 0}, {20, 4, 0, 0}, {22, 4, 0, 0}, {0, 0, 0, 0},
         {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
         {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
         {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
         {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
         {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}
     }},
-    // SFX 6: Boss spawn (low square)
+    // SFX 6: Boss spawn (eerie triangle wave)
     {24, 0, 0, {
         {0, 0, 0, 0}, {7, 3, 6, 0}, {20, 1, 4, 0}, {7, 3, 6, 0},
         {20, 1, 4, 0}, {26, 3, 7, 0}, {20, 1, 4, 0}, {27, 3, 7, 0},
         {1, 4, 4, 0}, {23, 3, 7, 0}, {23, 3, 7, 0}, {23, 3, 7, 0},
         {23, 3, 7, 0}, {23, 3, 6, 0}, {23, 3, 5, 0}, {23, 3, 0, 0},
-        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
-        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
+        {1, 4, 0, 0}, {1, 4, 0, 0}, {23, 3, 0, 0}, {11, 4, 0, 0},
+        {23, 0, 0, 0}, {23, 0, 0, 0}, {23, 0, 0, 0}, {23, 0, 0, 0},
         {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
         {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}
     }},
@@ -650,11 +651,11 @@ static const P8SFX hyperspace_sfx[] = {
         {13, 2, 7, 0}, {13, 2, 7, 0}, {8, 2, 7, 0}, {8, 2, 7, 0},
         {4, 2, 7, 0}, {4, 2, 7, 0}, {1, 2, 7, 0}, {1, 2, 7, 0},
         {1, 2, 7, 0}, {1, 2, 7, 0}, {1, 2, 7, 0}, {1, 2, 7, 0},
-        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
-        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
-        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
-        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0},
-        {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}
+        {18, 0, 0, 0}, {18, 0, 0, 0}, {18, 0, 0, 0}, {18, 0, 0, 0},
+        {19, 0, 0, 0}, {20, 0, 0, 0}, {50, 0, 2, 0}, {20, 0, 0, 0},
+        {20, 0, 0, 0}, {52, 0, 4, 0}, {68, 0, 4, 0}, {82, 0, 4, 0},
+        {118, 0, 5, 0}, {82, 0, 4, 0}, {102, 0, 4, 0}, {82, 0, 4, 0},
+        {82, 0, 4, 0}, {82, 0, 4, 0}, {1, 0, 4, 0}, {0, 0, 0, 0}
     }}
 };
 
@@ -675,14 +676,25 @@ static void sound_init(void) {
     // Enable sound
     REG_SOUNDCNT_X = SOUND_ENABLE;
 
-    // Set volume and enable all channels to both L/R
+    // Set volume and enable all channels to both L/R (including Channel 3)
     REG_SOUNDCNT_L = 0x7777 |  // Max volume
                      SOUND1_L | SOUND1_R |
                      SOUND2_L | SOUND2_R |
+                     SOUND3_L | SOUND3_R |
                      SOUND4_L | SOUND4_R;
 
     // PSG/FIFO ratio
     REG_SOUNDCNT_H = 0x0002;  // PSG at 100%
+
+    // Initialize Wave Channel 3 with saw wave pattern
+    // Wave RAM: 32 x 4-bit samples (16 bytes)
+    // Saw wave: 0,1,2,3,4,5,6,7,8,9,A,B,C,D,E,F,0,1,2,3,4,5,6,7,8,9,A,B,C,D,E,F
+    REG_SOUND3CNT_L = 0x0040;  // Bank 0, enable access to bank 1
+    REG_WAVE_RAM[0] = 0x10325476;  // 0,1,2,3,4,5,6,7
+    REG_WAVE_RAM[1] = 0x98BADCFE;  // 8,9,A,B,C,D,E,F
+    REG_WAVE_RAM[2] = 0x10325476;  // 0,1,2,3,4,5,6,7
+    REG_WAVE_RAM[3] = 0x98BADCFE;  // 8,9,A,B,C,D,E,F
+    REG_SOUND3CNT_L = 0x0080;  // Enable playback, use bank 0
 
     // Initialize channels
     for (int i = 0; i < 4; i++) {
@@ -701,9 +713,14 @@ static void silence_hw_channel(int hw_channel) {
     } else if (hw_channel == 1) {
         REG_SOUND2CNT_L = 0;
         REG_SOUND2CNT_H = 0;
-    } else {
+    } else if (hw_channel == 2) {
+        // Noise channel
         REG_SOUND4CNT_L = 0;
         REG_SOUND4CNT_H = 0;
+    } else if (hw_channel == 3) {
+        // Wave channel
+        REG_SOUND3CNT_H = 0;
+        REG_SOUND3CNT_X = 0;
     }
 }
 
@@ -730,13 +747,22 @@ static void play_p8_note(int hw_channel, u8 pitch, u8 waveform, u8 volume) {
         if (noise_div > 7) noise_div = 7;
         REG_SOUND4CNT_L = (gba_vol << 12);  // Envelope
         REG_SOUND4CNT_H = 0x8000 | (noise_div << 4);  // Frequency and restart
+    } else if (waveform <= 2 && hw_channel == 0) {
+        // Waveforms 0-2 (triangle, tilted saw, saw) - use Wave Channel 3 for richer sound
+        // Wave Channel 3 volume: 0=0%, 1=100%, 2=50%, 3=25%
+        u16 wave_vol;
+        if (gba_vol >= 12) wave_vol = 0x2000;       // 100%
+        else if (gba_vol >= 8) wave_vol = 0x4000;   // 50%
+        else wave_vol = 0x6000;                      // 25%
+
+        REG_SOUND3CNT_L = 0x0080;  // Enable playback
+        REG_SOUND3CNT_H = wave_vol;  // Volume (no length limit)
+        REG_SOUND3CNT_X = 0x8000 | gba_freq;  // Frequency and restart
     } else if (hw_channel == 0) {
         // GBA Channel 1 - Square with sweep
-        // Map PICO-8 waveform to duty cycle: 0-2=25%, 3-4=50%, 5-7=75%
         u16 duty;
-        if (waveform <= 2) duty = 0x0000;       // 12.5% (close to triangle/saw)
-        else if (waveform <= 4) duty = 0x0080;  // 50% (square/pulse)
-        else duty = 0x00C0;                     // 75% (organ/phaser)
+        if (waveform <= 4) duty = 0x0080;  // 50% (square/pulse)
+        else duty = 0x00C0;                 // 75% (organ/phaser)
 
         REG_SOUND1CNT_L = 0x0000;  // No sweep
         REG_SOUND1CNT_H = duty | (gba_vol << 12);  // Duty + envelope
@@ -744,9 +770,9 @@ static void play_p8_note(int hw_channel, u8 pitch, u8 waveform, u8 volume) {
     } else if (hw_channel == 1) {
         // GBA Channel 2 - Square
         u16 duty;
-        if (waveform <= 2) duty = 0x0000;       // 12.5%
-        else if (waveform <= 4) duty = 0x0080;  // 50%
-        else duty = 0x00C0;                     // 75%
+        if (waveform <= 2) duty = 0x0000;       // 12.5% for triangle/saw fallback
+        else if (waveform <= 4) duty = 0x0080;  // 50% (square/pulse)
+        else duty = 0x00C0;                     // 75% (organ/phaser)
 
         REG_SOUND2CNT_L = duty | (gba_vol << 12);  // Duty + envelope
         REG_SOUND2CNT_H = 0x8000 | gba_freq;  // Frequency and restart
@@ -776,6 +802,7 @@ static void sfx(int n, int channel) {
         // Stop this channel completely
         sound_channels[channel].active = false;
         silence_hw_channel(hw_channel);
+        if (hw_channel == 0) silence_hw_channel(3);  // Also silence Wave channel
         return;
     }
 
@@ -787,6 +814,7 @@ static void sfx(int n, int channel) {
         silence_hw_channel(0);
         silence_hw_channel(1);
         silence_hw_channel(2);
+        silence_hw_channel(3);  // Also silence Wave channel
         return;
     }
 
@@ -828,12 +856,14 @@ static void sound_update(void) {
                 // SFX finished
                 ch->active = false;
                 silence_hw_channel(hw_channel);
+                if (hw_channel == 0) silence_hw_channel(3);  // Also silence Wave channel
             } else {
                 const u8 *note = ch->sfx->notes[ch->note_index];
                 if (note[2] == 0) {
                     // Volume 0 = end of sound
                     ch->active = false;
                     silence_hw_channel(hw_channel);
+                    if (hw_channel == 0) silence_hw_channel(3);  // Also silence Wave channel
                 } else {
                     // Play next note
                     play_p8_note(hw_channel, note[0], note[1], note[2]);
