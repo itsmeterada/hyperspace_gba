@@ -312,12 +312,13 @@ static u16 draw_color_rgb = 0x7FFF;
 static u32 rnd_state = 1;
 static bool btn_state[7] = {false};
 static bool btn_prev[7] = {false};
+static bool btn_select_held = false;  // SELECT button for palette display
 EWRAM_DATA static s32 cart_data[64];
 static int current_page = 0;
 static volatile u16* vram_buffer;  // Points to back buffer
 
-// Dither pattern in IWRAM for fast access
-IWRAM_DATA static u8 dither_pattern[8][8];
+// Dither pattern (8x8 from spritesheet)
+static u8 dither_pattern[8][8];
 
 // Spritesheet stays in ROM (const) for faster access
 // Will be accessed via hyperspace_spritesheet directly
@@ -911,7 +912,7 @@ static fix16_t aim_life_ratio = F16(-1.0);
 static int nb_nme_ship = 0;
 static bool waiting_nme_clear = false, spawn_asteroids = false;
 static fix16_t fade_ratio = F16(-1.0);
-static int manual_fire = 1, non_inverted_y = 0;
+static int manual_fire = 1, non_inverted_y = 0, dither_enabled = 0;
 static fix16_t cur_laser_t = 0;
 static int cur_laser_side = -1;
 static Texture* cur_tex = 0;
@@ -1161,8 +1162,6 @@ static void rasterize_flat_tri(Vec3* v0, Vec3* v1, Vec3* v2, fix16_t* uv0, fix16
 
     // Texture info
     int tex_x = cur_tex->x, tex_y = cur_tex->y, tex_lit_x = cur_tex->light_x;
-    // Pre-calculate light threshold (avoid per-pixel calculation)
-    int use_lit = (light <= F16(11.0)) ? 1 : 0;  // Simplified dithering
 
     // Scanline loop
     for (int y = y_start; y <= y_end; y++) {
@@ -1185,9 +1184,15 @@ static void rasterize_flat_tri(Vec3* v0, Vec3* v1, Vec3* v2, fix16_t* uv0, fix16
                 fix16_t u = u_left + fix16_mul(x_prestep, du_dx);
                 fix16_t v = v_left_val + fix16_mul(x_prestep, dv_dx);
 
-                // Dither pattern for lighting
+                // Dither pattern for lighting using 8x8 pattern (like PicoSystem version)
                 int offset_x = tex_x;
-                if (use_lit && ((y ^ xl) & 1)) offset_x += tex_lit_x;
+                if (dither_enabled) {
+                    // Use 8x8 dither pattern from spritesheet row 56-63
+                    int dither_val = dither_pattern[y & 7][xl & 7];
+                    if (light <= F16(7.0) + fix16_mul(fix16_from_int(dither_val), F16(0.125))) {
+                        offset_x += tex_lit_x;
+                    }
+                }
 
                 // Use ARM assembly optimized scanline renderer
                 volatile u16* row = &vram_buffer[y * SCREEN_WIDTH];
@@ -1596,12 +1601,13 @@ static void game_update(void) {
     } else if (cur_mode == 0) {
         if (dx == 0 && dy == 0) dx = F16(-0.25);
         cam_angle_z += fix16_mul(dx, F16(0.007)); cam_angle_x -= fix16_mul(dy, F16(0.007));
-        if (btnp(6)) { cur_mode = 3; manual_fire = dget(1); non_inverted_y = dget(2); sound_enabled = dget(3); }
+        if (btnp(6)) { cur_mode = 3; manual_fire = dget(1); non_inverted_y = dget(2); sound_enabled = dget(3); dither_enabled = dget(4); if (dither_enabled < 0 || dither_enabled > 1) dither_enabled = 1; }
     } else if (cur_mode == 3) {
         cam_angle_z -= F16(0.00175);
         if (btnp(0) || btnp(1)) { manual_fire = 1 - manual_fire; dset(1, manual_fire); }
         if (btnp(2) || btnp(3)) { non_inverted_y = 1 - non_inverted_y; dset(2, non_inverted_y); }
         if (btnp(4)) { sound_enabled = 1 - sound_enabled; dset(3, sound_enabled); }
+        if (btnp(5)) { dither_enabled = 1 - dither_enabled; dset(4, dither_enabled); }
         if (btnp(6)) {
             src_cam_angle_z = normalize_angle(cam_angle_z); src_cam_angle_x = normalize_angle(cam_angle_x);
             src_cam_x = cam_x; src_cam_y = cam_y;
@@ -1778,10 +1784,44 @@ static void game_draw(void) {
         spr(16, 99, 1, 8, 1); clip_set(99, 1, life * 15, 7); spr(0, 99, 1, 8, 1); clip_reset();
     } else if (cur_mode != 1) { print_3d("HYPERSPACE", 58, 1); print_3d("GBA Port by itsmeterada", 34, 8);
         if (cur_mode == 0) { print_3d("PRESS START", 54, 100); char buf[32]; snprintf(buf, 32, "BEST %d", best_score); print_3d(buf, 1, 120); }
-        else { print_3d("PRESS START", 46, 55); print_3d("DPAD:OPT A:SND", 38, 65);
-            const char* opt[] = {"AUTO", "MANUAL", "INV Y", "NORM Y", "SND OFF", "SND ON"};
-            print_3d(opt[manual_fire], 9, 100); print_3d(opt[non_inverted_y + 2], 9, 110); print_3d(opt[sound_enabled + 4], 9, 120); } }
+        else { print_3d("PRESS START", 46, 55); print_3d("DPAD:OPT A:SND L:DTH", 26, 65);
+            const char* opt[] = {"AUTO", "MANUAL", "INV Y", "NORM Y", "SND OFF", "SND ON", "DTH OFF", "DTH ON"};
+            print_3d(opt[manual_fire], 9, 90); print_3d(opt[non_inverted_y + 2], 9, 100); print_3d(opt[sound_enabled + 4], 9, 110); print_3d(opt[dither_enabled + 6], 9, 120); } }
     if (fade_ratio > 0) { Vec3 center = {FIX_SCREEN_CENTER_X, FIX_SCREEN_CENTER_Y, fix16_one}; draw_explosion(&center, fade_ratio); }
+}
+
+// Palette display (for PICO-8 color comparison)
+static void draw_palette_display(void) {
+    // 4x4 grid of 16 colors
+    // Screen is 160x128, so cells are 40x32 pixels
+    const int cell_w = SCREEN_WIDTH / 4;   // 40
+    const int cell_h = SCREEN_HEIGHT / 4;  // 32
+
+    for (int i = 0; i < 16; i++) {
+        int col = i % 4;
+        int row = i / 4;
+        int x0 = col * cell_w;
+        int y0 = row * cell_h;
+        u16 color = PICO8_PALETTE[i];
+
+        // Fill rectangle with color i
+        for (int y = y0; y < y0 + cell_h; y++) {
+            for (int x = x0; x < x0 + cell_w; x++) {
+                vram_buffer[y * SCREEN_WIDTH + x] = color;
+            }
+        }
+
+        // Draw border (white or black for contrast)
+        u16 border_color = (i == 0 || i == 1 || i == 2 || i == 5) ? 0x7FFF : 0x0000;
+        for (int x = x0; x < x0 + cell_w; x++) {
+            vram_buffer[y0 * SCREEN_WIDTH + x] = border_color;
+            vram_buffer[(y0 + cell_h - 1) * SCREEN_WIDTH + x] = border_color;
+        }
+        for (int y = y0; y < y0 + cell_h; y++) {
+            vram_buffer[y * SCREEN_WIDTH + x0] = border_color;
+            vram_buffer[y * SCREEN_WIDTH + x0 + cell_w - 1] = border_color;
+        }
+    }
 }
 
 // GBA-specific - optimized
@@ -1804,6 +1844,7 @@ static void update_input(void) {
     btn_state[2] = (keys & KEY_UP) != 0; btn_state[3] = (keys & KEY_DOWN) != 0;
     btn_state[4] = (keys & (KEY_A | KEY_B)) != 0; btn_state[5] = (keys & (KEY_L | KEY_R)) != 0;
     btn_state[6] = (keys & KEY_START) != 0;
+    btn_select_held = (keys & KEY_SELECT) != 0;
 }
 
 static void load_embedded_data(void) {
@@ -1811,7 +1852,7 @@ static void load_embedded_data(void) {
     // Only copy map data to RAM
     memcpy(map_memory, hyperspace_map, sizeof(map_memory));
 
-    // Initialize dither pattern in IWRAM for fast access
+    // Initialize dither pattern from spritesheet
     for (int y = 0; y < 8; y++) {
         for (int x = 0; x < 8; x++) {
             dither_pattern[y][x] = SGET_FAST(x, 56 + y);
@@ -1857,9 +1898,14 @@ int main(void) {
     sound_init();  // Initialize sound system
     while (1) {
         update_input();
-        game_update();
-        sound_update();  // Update sound playback
-        game_draw();
+        if (btn_select_held) {
+            // Show palette display when SELECT is held
+            draw_palette_display();
+        } else {
+            game_update();
+            sound_update();  // Update sound playback
+            game_draw();
+        }
         vsync();        // Wait for VBlank
         flip_screen();  // Flip during VBlank to avoid tearing
     }
