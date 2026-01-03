@@ -8,6 +8,7 @@ A Game Boy Advance port of Hyperspace, the PICO-8 3D space shooter by J-FRY.
 
 - **Original**: [Hyperspace by J-Fry](https://www.lexaloffle.com/bbs/?tid=51336) for PICO-8
 - **PicoSystem port**: itsmeterada
+- **Thumby Color port**: itsmeterada
 - **GBA port**: itsmeterada
 
 Many optimizations developed for this GBA port have been backported to the PicoSystem version.
@@ -364,4 +365,5 @@ gba/
 ## License
 
 This port is based on the original PICO-8 game by J-Fry.
+
 
