@@ -2,7 +2,7 @@
 
 ![Screenshot](screenshot.jpg)
 
-A port of Hyperspace to the Game Boy Advance.
+A Game Boy Advance port of Hyperspace, the PICO-8 3D space shooter by J-FRY.
 
 ## Original Game
 
@@ -364,3 +364,4 @@ gba/
 ## License
 
 This port is based on the original PICO-8 game by J-Fry.
+
