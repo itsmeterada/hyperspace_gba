@@ -927,7 +927,7 @@ static fix16_t roll_angle = 0, roll_spd = 0, roll_f = 0;
 static fix16_t pitch_angle = 0, pitch_spd = 0, pitch_f = 0;
 static Mat34 ship_mat, ship_pos_mat, inv_ship_mat, light_mat;
 static Vec3 light_dir, ship_light_dir;
-static int cur_mode = 0, score = 0, best_score = 0, life = 4, hit_t = -1;
+static int cur_mode = 0, score = 0, best_score = 0, last_score = -1, life = 4, hit_t = -1;
 static Vec3 hit_pos;
 static bool laser_on = false, laser_spawned = false;
 static fix16_t global_t = 0, game_spd = F16(1.0);
@@ -1686,7 +1686,7 @@ static void game_update(void) {
     mat_mul_vec(&ship_light_dir, &inv_ship_mat, &light_dir);
     if (fade_ratio >= 0) {
         if (cur_mode == 2) fade_ratio += FIX_TWO; else fade_ratio -= FIX_TWO;
-        if (fade_ratio >= F16(100.0)) { if (score > best_score) { best_score = score; dset(0, best_score); } init_main(); }
+        if (fade_ratio >= F16(100.0)) { last_score = score; if (score > best_score) { best_score = score; dset(0, best_score); } init_main(); }
     }
 }
 
@@ -1838,7 +1838,9 @@ static void game_draw(void) {
     if (cur_mode == 2) { char buf[32]; snprintf(buf, 32, "SCORE %d", score); print_3d(buf, 1, 1);
         spr(16, 99, 1, 8, 1); clip_set(99, 1, life * 15, 7); spr(0, 99, 1, 8, 1); clip_reset();
     } else if (cur_mode != 1) { print_3d("HYPERSPACE", 58, 1); print_3d("GBA Port by itsmeterada", 34, 8);
-        if (cur_mode == 0) { print_3d("PRESS START", 54, 100); char buf[32]; snprintf(buf, 32, "BEST %d", best_score); print_3d(buf, 1, 120); }
+        if (cur_mode == 0) { print_3d("PRESS START", 54, 100); char buf[32];
+            if (last_score >= 0) { snprintf(buf, 32, "LAST %d", last_score); print_3d(buf, 1, 112); }
+            snprintf(buf, 32, "BEST %d", best_score); print_3d(buf, 1, 120); }
         else { print_3d("PRESS START", 46, 55); print_3d("DPAD:OPT A:SND L:DTH", 26, 65);
             const char* opt[] = {"AUTO", "MANUAL", "INV Y", "NORM Y", "SND OFF", "SND ON", "DTH OFF", "DTH ON"};
             print_3d(opt[manual_fire], 9, 90); print_3d(opt[non_inverted_y + 2], 9, 100); print_3d(opt[sound_enabled + 4], 9, 110); print_3d(opt[dither_enabled + 6], 9, 120); } }
