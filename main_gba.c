@@ -1708,7 +1708,14 @@ static void transform_vert(void) {
             if (nme->life > 0) {
                 fix16_t ddx = fix16_mul(nme->proj[0].x - aim_proj.x, F16(0.1)), ddy = fix16_mul(nme->proj[0].y - aim_proj.y, F16(0.1));
                 fix16_t sqr_dist = fix16_mul(ddx, ddx) + fix16_mul(ddy, ddy);
-                if (sqr_dist < auto_aim_dist) { auto_aim_dist = sqr_dist; tgt_pos = &nme->pos; }
+                if (sqr_dist < auto_aim_dist) {
+                    auto_aim_dist = sqr_dist; tgt_pos = &nme->pos;
+                    fix16_t laser_t = fix16_mul(-game_spd, fix16_div(nme->pos.z, F16(5.0)));
+                    interp_tgt_pos.x = nme->pos.x + fix16_mul(nme->spd.x, laser_t);
+                    interp_tgt_pos.y = nme->pos.y + fix16_mul(nme->spd.y, laser_t);
+                    interp_tgt_pos.z = fix16_min(0, nme->pos.z + fix16_mul(nme->spd.z, laser_t));
+                    if (nme->type != 1) aim_life_ratio = fix16_div(fix16_from_int(nme->life), fix16_from_int(nme_life[nme->type - 1]));
+                }
             }
         }
     }
@@ -1800,7 +1807,25 @@ static void game_draw(void) {
         }
     }
     draw_lasers(nme_lasers, num_nme_lasers, 8); draw_lasers(lasers, num_lasers, 11);
-    if (cur_mode == 2) { int idx = 97; if (tgt_pos) idx = 98; spr(idx, fix16_to_int(aim_proj.x) - 3, fix16_to_int(aim_proj.y) - 3, 1, 1); }
+    // Draw aim and lock-on indicators (before ship, matching PicoSystem version)
+    if (cur_mode == 2) {
+        int idx = 97;
+        if (tgt_pos) {
+            idx = 98;
+            Vec3 p_tgt, p_interp;
+            transform_pos(&p_tgt, &cam_mat, tgt_pos);
+            transform_pos(&p_interp, &cam_mat, &interp_tgt_pos);
+            int x = fix16_to_int(p_tgt.x) - 2;
+            int y = fix16_to_int(p_tgt.y) - 4;
+            spr(113, x - 1, y + 1, 1, 1);
+            spr(114, fix16_to_int(p_interp.x) - 3, fix16_to_int(p_interp.y) - 3, 1, 1);
+            if (aim_life_ratio >= 0) {
+                rectfill(x, y, x + 4, y, 3);
+                rectfill(x, y, x + fix16_to_int(fix16_mul(aim_life_ratio, F16(4.0))), y, 11);
+            }
+        }
+        spr(idx, fix16_to_int(aim_proj.x) - 3, fix16_to_int(aim_proj.y) - 3, 1, 1);
+    }
     if (laser_spawned) cur_tex = &ship_tex_laser_lit; else cur_tex = &ship_tex;
     sort_tris(ship_mesh.triangles, ship_mesh.num_triangles, ship_mesh.projected);
     if (hit_t != -1) { transform_pos(&p0, &cam_mat, &hit_pos); draw_explosion(&p0, F16(3.0));
